@@ -1,0 +1,10 @@
+[
+  { "ingredient_name": "vitamin c", "display_name": "Vitamin C", "unit": "mg", "guide_amount": 2000 },
+  { "ingredient_name": "vitamin d", "display_name": "Vitamin D", "unit": "IU", "guide_amount": 4000 },
+  { "ingredient_name": "omega-3", "display_name": "Omega-3", "unit": "mg", "guide_amount": 3000 },
+  { "ingredient_name": "magnesium", "display_name": "Magnesium", "unit": "mg", "guide_amount": 350 },
+  { "ingredient_name": "calcium", "display_name": "Calcium", "unit": "mg", "guide_amount": 2500 },
+  { "ingredient_name": "zinc", "display_name": "Zinc", "unit": "mg", "guide_amount": 40 },
+  { "ingredient_name": "iron", "display_name": "Iron", "unit": "mg", "guide_amount": 45 },
+  { "ingredient_name": "vitamin b6", "display_name": "Vitamin B6", "unit": "mg", "guide_amount": 100 }
+]

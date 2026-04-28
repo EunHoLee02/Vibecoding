@@ -1,0 +1,866 @@
+아래를 **8단계 프로젝트 구조 및 구현 계획 최종 확정본**으로 쓰시면 됩니다.
+기준은 7단계 기술 스택 및 아키텍처 확정본과 마스터 프롬프트 구조입니다.  
+
+---
+
+# 8단계 프로젝트 구조 및 구현 계획 최종 확정
+
+## 충돌 항목
+
+1. 초기 OCR 추천안은 정확도/확장성 기준으로 PaddleOCR 우선 검토였지만, 현재 개발 환경이 **별도 서버용 데스크톱 없이 노트북 단독 개발 환경**이므로 **기본 OCR 엔진을 EasyOCR로 변경 확정**한다.
+2. 메일 발송 수단은 처음에 로그 기반만 고려했으나, **이메일 링크 방식 비밀번호 재설정**과 운영 환경의 완결성을 맞추기 위해 **dev/staging은 로그 기반, prod는 외부 메일 서비스 도입**으로 확정한다.
+
+---
+
+## 진행 전 체크
+
+1~7단계 확정본 기준으로 8단계는 **실제 코드 작성이 아니라 프로젝트 구조와 구현 계획만 제시**하는 단계다.
+이번 단계에서는 다음 항목을 확정해야 한다.
+
+* 전체 프로젝트 구조
+* 프론트엔드 폴더 구조
+* 백엔드 폴더 구조
+* 공통 모듈 구조
+* 환경변수 관리 구조
+* API 응답 포맷 / 에러 포맷 기준
+* 구현 우선순위
+* P0 기능 구현 순서
+* 스프린트 단위 권장 개발 순서
+
+이번 단계는 7단계 기준 스택인 아래 조합을 전제로 한다.
+
+* **Next.js(App Router) + FastAPI + PostgreSQL + Redis + Cloudflare R2 + Vercel/Render**
+* 인증: **서버 세션 + Redis + `user_sessions`**
+* 파일 업로드: **R2 presigned upload + OCR 원본 즉시 삭제**
+* 비동기 처리: **FastAPI + Redis queue + Worker + Cron**
+* 공통 에러 코드: **10개 표준 코드**
+* 결과 DTO: **v1 고정 구조**
+
+또한 이번 단계에서 추가 반영된 조건은 아래와 같다.
+
+* 개발 환경: **노트북 단독 개발**
+* OCR 엔진: **EasyOCR**
+* 메일 발송:
+
+  * **dev/staging: 로그 기반**
+  * **prod: 외부 메일 서비스**
+* 스프린트 운영: **2주 단위 + 주 1회 체크**
+* 타입 관리:
+
+  * **P0: 수동 타입**
+  * **P1 이후: OpenAPI 기반 자동 생성 검토**
+
+---
+
+# 1. 전체 프로젝트 구조 제안
+
+## 권장 저장소 구조
+
+가정: **monorepo 구조**로 진행한다.
+
+이유:
+
+* 프론트엔드, 백엔드, 워커, 계약 문서, 인프라 설정을 하나의 저장소에서 버전 관리할 수 있다.
+* 9단계 DB 연결 설계, 10a~10c 구현, 11단계 배포, 12단계 테스트 계획까지 일관되게 연결하기 쉽다.
+* 개인/소규모 개발에서는 여러 저장소보다 관리 비용이 낮다.
+
+```text
+repo/
+├─ apps/
+│  ├─ web/                         # Next.js(App Router)
+│  └─ backend/                     # FastAPI + Worker + Alembic
+├─ packages/
+│  ├─ contracts/                   # API 계약, 에러 코드, DTO 예시
+│  ├─ config/                      # 공통 설정 템플릿, env 규칙 문서
+│  └─ fixtures/                    # 테스트용 JSON, 더미 응답, 샘플 데이터
+├─ infra/
+│  ├─ docker/                      # 로컬 개발용 Docker 설정
+│  ├─ render/                      # Render 배포 초안
+│  └─ vercel/                      # Vercel 배포 초안
+├─ scripts/                        # 실행/시드/정리/개발 보조 스크립트
+├─ docs/                           # 설계 문서, 변경 이력, 운영 메모
+├─ .github/                        # CI/CD 워크플로우(11단계 구체화)
+├─ .editorconfig
+├─ .gitignore
+├─ README.md
+└─ docker-compose.yml
+```
+
+## 디렉토리 역할
+
+### `apps/web`
+
+* 사용자/관리자 웹 화면
+* 인증 상태 반영 UI
+* OCR 업로드/검수 화면
+* 분석 결과 화면
+* 문의 화면
+* 관리자 문의 관리 화면
+
+### `apps/backend`
+
+* REST API
+* 인증/권한
+* DB 접근
+* OCR/분석 워커
+* 스케줄 배치
+* 외부 연동 모듈
+
+### `packages/contracts`
+
+* 공통 응답 포맷
+* 공통 에러 코드 목록
+* DTO 예시
+* OpenAPI 문서 또는 API 규약 문서
+
+### `infra`
+
+* Docker
+* 로컬 개발 환경 구성
+* 배포 관련 설정 초안
+
+### `scripts`
+
+* 로컬 실행 보조
+* 마이그레이션 보조
+* seed 실행
+* cleanup 실행
+
+### `docs`
+
+* 단계별 확정본 보관
+* 운영 정책
+* 장애 대응 메모
+* API 변경 기록
+
+---
+
+# 2. 프론트엔드 폴더 구조
+
+## 권장 구조
+
+```text
+apps/web/
+├─ app/
+│  ├─ (public)/
+│  │  ├─ login/page.tsx
+│  │  ├─ signup/page.tsx
+│  │  ├─ forgot-password/page.tsx
+│  │  └─ reset-password/page.tsx
+│  ├─ (app)/
+│  │  ├─ app/layout.tsx
+│  │  ├─ app/page.tsx                      # 사용자 대시보드
+│  │  ├─ supplements/page.tsx              # 영양제 목록
+│  │  ├─ supplements/new/page.tsx          # 영양제 등록
+│  │  ├─ supplements/[id]/page.tsx         # 영양제 상세
+│  │  ├─ supplements/[id]/edit/page.tsx    # 영양제 수정
+│  │  ├─ ocr/[jobId]/page.tsx              # OCR 상태/검수
+│  │  ├─ analysis/[analysisId]/page.tsx    # 분석 상태/결과
+│  │  ├─ support/inquiries/page.tsx        # 문의 목록
+│  │  └─ account/page.tsx                  # 계정 설정/탈퇴
+│  ├─ (admin)/
+│  │  ├─ admin/layout.tsx
+│  │  ├─ admin/page.tsx
+│  │  └─ admin/inquiries/page.tsx
+│  ├─ error.tsx
+│  ├─ loading.tsx
+│  └─ not-found.tsx
+├─ components/
+│  ├─ ui/
+│  ├─ layout/
+│  ├─ common/
+│  ├─ auth/
+│  ├─ supplements/
+│  ├─ ocr/
+│  ├─ analysis/
+│  ├─ inquiries/
+│  └─ admin/
+├─ features/
+│  ├─ auth/
+│  ├─ dashboard/
+│  ├─ supplements/
+│  ├─ ocr/
+│  ├─ analysis/
+│  ├─ inquiries/
+│  └─ admin-inquiries/
+├─ lib/
+│  ├─ api/
+│  │  ├─ client.ts
+│  │  ├─ fetcher.ts
+│  │  └─ error.ts
+│  ├─ query/
+│  │  ├─ query-client.ts
+│  │  └─ query-keys.ts
+│  ├─ auth/
+│  ├─ utils/
+│  └─ validators/
+├─ hooks/
+├─ stores/
+├─ types/
+├─ constants/
+├─ middleware.ts
+├─ public/
+└─ tests/
+```
+
+## 구조 원칙
+
+### `app/`
+
+* 라우트와 레이아웃만 둔다.
+* 데이터 로직과 UI 조합은 `features`로 넘긴다.
+
+### `components/`
+
+* 재사용 가능한 범용 UI 컴포넌트
+* 레이아웃 컴포넌트
+* 로딩/에러/빈 상태 공통 UI
+
+### `features/`
+
+* 기능 단위 UI 묶음
+* API 호출과 화면 상태 연결
+* 페이지에서 바로 조합 가능한 수준의 기능 모듈
+
+### `lib/api`
+
+* 백엔드 공통 응답 포맷 파싱
+* 에러 코드 해석
+* 인증 쿠키 기반 요청 처리
+
+### `stores`
+
+* Zustand는 **UI 상태 전용**
+* 예: 모달 열림 상태, 필터 패널 상태, 임시 UI 상태
+
+### `types`
+
+* P0 단계에서는 API 응답 타입 수동 관리
+* P1 이후 OpenAPI 자동 생성 검토
+
+## 화면 구조와의 연결
+
+* `/app` → 대시보드
+* `/supplements` 계열 → 영양제 CRUD
+* `/ocr/[jobId]` → OCR 진행/검수
+* `/analysis/[analysisId]` → 분석 상태/결과
+* `/support/inquiries` → 문의 목록
+* `/admin/inquiries` → 관리자 문의 처리
+
+---
+
+# 3. 백엔드 폴더 구조
+
+## 권장 구조
+
+```text
+apps/backend/
+├─ app/
+│  ├─ main.py
+│  ├─ api/
+│  │  ├─ deps.py
+│  │  ├─ router.py
+│  │  └─ v1/
+│  │     ├─ auth.py
+│  │     ├─ users.py
+│  │     ├─ supplements.py
+│  │     ├─ ocr.py
+│  │     ├─ analyses.py
+│  │     ├─ inquiries.py
+│  │     ├─ admin_inquiries.py
+│  │     └─ health.py
+│  ├─ core/
+│  │  ├─ config.py
+│  │  ├─ security.py
+│  │  ├─ session.py
+│  │  ├─ rate_limit.py
+│  │  ├─ logging.py
+│  │  ├─ exceptions.py
+│  │  └─ responses.py
+│  ├─ db/
+│  │  ├─ base.py
+│  │  ├─ session.py
+│  │  ├─ models/
+│  │  └─ repositories/
+│  ├─ schemas/
+│  │  ├─ common.py
+│  │  ├─ auth.py
+│  │  ├─ supplement.py
+│  │  ├─ ocr.py
+│  │  ├─ analysis.py
+│  │  ├─ inquiry.py
+│  │  └─ admin.py
+│  ├─ services/
+│  │  ├─ auth_service.py
+│  │  ├─ supplement_service.py
+│  │  ├─ ocr_service.py
+│  │  ├─ analysis_service.py
+│  │  ├─ inquiry_service.py
+│  │  ├─ admin_service.py
+│  │  └─ account_cleanup_service.py
+│  ├─ integrations/
+│  │  ├─ r2/
+│  │  ├─ ocr/
+│  │  │  ├─ engine.py
+│  │  │  ├─ parser.py
+│  │  │  └─ exceptions.py
+│  │  ├─ mail/
+│  │  │  ├─ interface.py
+│  │  │  ├─ logger_mailer.py
+│  │  │  └─ provider_mailer.py
+│  │  └─ redis/
+│  ├─ worker/
+│  │  ├─ worker_app.py
+│  │  ├─ tasks/
+│  │  │  ├─ ocr_tasks.py
+│  │  │  ├─ analysis_tasks.py
+│  │  │  └─ cleanup_tasks.py
+│  │  └─ schedulers/
+│  └─ common/
+│     ├─ enums.py
+│     ├─ constants.py
+│     ├─ ids.py
+│     └─ time.py
+├─ alembic/
+├─ alembic.ini
+├─ tests/
+│  ├─ unit/
+│  ├─ integration/
+│  └─ api/
+├─ pyproject.toml
+└─ README.md
+```
+
+## 구조 원칙
+
+### `api/v1`
+
+* 엔드포인트만 담당
+* 요청 파라미터 검증 진입점
+* 서비스 호출과 응답 변환 담당
+
+### `services`
+
+* 도메인별 비즈니스 로직
+* 상태 전이
+* 예외 처리 분기
+* 여러 repository/integration 조합 처리
+
+### `db/repositories`
+
+* DB 접근 전담
+* 모델 조회, 생성, 수정, 삭제
+* service layer와 DB 쿼리 로직 분리
+
+### `integrations/ocr`
+
+* **EasyOCR 호출 래퍼**
+* OCR 결과 텍스트 정규화
+* OCR 실패 예외 변환
+
+### `integrations/mail`
+
+* 인터페이스 기반 분리
+* dev/staging은 `logger_mailer.py`
+* prod는 `provider_mailer.py`
+
+### `worker/tasks`
+
+* OCR 비동기 처리
+* 분석 비동기 처리
+* 하드 삭제 / 만료 세션 정리 / 임시 파일 정리
+
+---
+
+# 4. 공통 모듈 구조
+
+## 권장 구조
+
+```text
+packages/contracts/
+├─ openapi/
+│  └─ openapi.yaml
+├─ errors/
+│  ├─ error-codes.json
+│  └─ error-messages.md
+├─ dto/
+│  ├─ success-envelope.json
+│  ├─ pagination-meta.json
+│  └─ analysis-result-v1.json
+└─ examples/
+   ├─ auth/
+   ├─ supplements/
+   ├─ ocr/
+   ├─ analysis/
+   └─ inquiries/
+```
+
+## 역할
+
+### `openapi`
+
+* API 명세 기준점
+* 이후 프론트 타입 자동 생성 검토 시 사용
+
+### `errors`
+
+* 공통 에러 코드 정의
+* 사용자 메시지/운영 메시지 기준 정리
+
+### `dto`
+
+* 성공 응답 래퍼
+* 분석 결과 v1 구조
+* 리스트 응답 메타 구조
+
+### `examples`
+
+* 프론트 더미 응답 예시
+* 테스트 payload 예시
+
+## 공통 모듈 운영 원칙
+
+* 언어가 다르므로 “실행 코드 공유”보다 **계약 공유** 중심으로 둔다.
+* 프론트와 백엔드 모두 여기 있는 규약을 기준으로 구현한다.
+
+---
+
+# 5. 환경변수 관리 구조
+
+## 권장 구조
+
+```text
+repo/
+├─ .env.example
+├─ env/
+│  ├─ web/.env.example
+│  ├─ backend/.env.example
+│  ├─ worker/.env.example
+│  └─ local/.env.docker.example
+```
+
+## 관리 원칙
+
+### 루트 `.env.example`
+
+* 전체 프로젝트에서 필요한 env 항목 개요만 정리
+
+### `env/web/.env.example`
+
+* 프론트 전용 env
+* `NEXT_PUBLIC_*` 허용 범위만 포함
+
+### `env/backend/.env.example`
+
+* DB URL
+* Redis URL
+* R2 키
+* 세션 secret
+* 메일 provider 키
+* 기타 서버 전용 값
+
+### `env/worker/.env.example`
+
+* OCR/분석 워커 전용 env
+* 백엔드와 공유하는 DB/Redis/storage 설정 포함
+
+### `env/local/.env.docker.example`
+
+* Docker Compose 로컬 실행용
+* 배포 env와 분리
+
+## 보안 원칙
+
+* secret 값 하드코딩 금지
+* 프론트에 private key 노출 금지
+* 운영 비밀키는 배포 플랫폼의 secret manager 사용
+* dev/staging/prod env 완전 분리
+
+---
+
+# 6. API 응답 포맷 / 에러 포맷 기준
+
+7단계에서 공통 에러 코드와 실패 응답 포맷, 분석 결과 DTO v1이 확정되었으므로 이를 전 프로젝트 공통 규약으로 적용한다. 
+
+## 성공 응답 포맷
+
+```json
+{
+  "success": true,
+  "data": {},
+  "meta": {}
+}
+```
+
+## 실패 응답 포맷
+
+```json
+{
+  "success": false,
+  "code": "INVALID_INPUT",
+  "message": "입력값을 확인해주세요.",
+  "detail": {},
+  "request_id": "trace-id"
+}
+```
+
+## 공통 에러 코드
+
+* `INVALID_INPUT`
+* `UNAUTHORIZED`
+* `FORBIDDEN`
+* `NOT_FOUND`
+* `CONFLICT`
+* `TOO_MANY_REQUESTS`
+* `INTERNAL_ERROR`
+* `BAD_GATEWAY`
+* `SERVICE_UNAVAILABLE`
+* `GATEWAY_TIMEOUT`
+
+## 적용 기준
+
+### 단건 조회
+
+* `data`에 단건 객체 반환
+
+### 목록 조회
+
+* `data.items`
+* `meta.pagination`
+
+### 생성/수정/삭제
+
+* `data`에 최소 식별자와 상태값 포함
+
+### 비동기 상태 조회
+
+* `data.status`
+* `data.progress`
+* `data.next_poll_after_ms`
+
+### 분석 결과 조회
+
+* DTO v1 고정 블록 사용
+
+  * `summary`
+  * `final_recommendation`
+  * `warnings`
+  * `targets`
+  * `metadata`
+
+## 프론트 처리 기준
+
+### 공통 처리
+
+* `success === false`면 공통 에러 처리기로 위임
+* `request_id`는 문의/운영 대응용으로 노출 가능
+
+### 인증 오류
+
+* `UNAUTHORIZED` → 로그인 페이지 이동 또는 세션 재확인
+
+### 제한 초과
+
+* `TOO_MANY_REQUESTS` → 재시도 안내 UI 표시
+
+### 서비스 장애
+
+* `SERVICE_UNAVAILABLE`, `GATEWAY_TIMEOUT` → 잠시 후 재시도 메시지 통일
+
+---
+
+# 7. 구현 우선순위
+
+## P0
+
+* 인증/세션
+* 영양제 등록/수정/삭제/목록/상세
+* OCR 업로드/상태조회/검수 후 저장
+* 분석 실행/상태조회/결과조회/완전 일치 재사용
+* 문의 등록/문의 목록
+* 관리자 문의 관리 화면
+* 탈퇴 즉시 로그인 차단 + 30일 후 hard delete 배치
+
+## P1
+
+* OpenAPI 기반 타입 자동 생성
+* OCR 정확도 개선
+* 관리자 사용자 차단/복구 UI
+* 운영 보강 기능
+* 고급 검색/정렬
+* 악성 파일 검사
+
+## P2
+
+* 추천 고도화
+* 운영 통계/리포트
+* 관리자 기능 확장
+* 알림 고도화
+
+---
+
+# 8. P0 기능 구현 순서
+
+## 1순위: 공통 기반
+
+1. monorepo 초기 구조 생성
+2. web/backend 기본 실행 확인
+3. 공통 env 구조 정리
+4. 공통 응답/에러 포맷 유틸 작성
+5. 로깅/`request_id`/예외 처리 구조 확정
+6. DB/Redis 연결 골격 작성
+
+## 2순위: 인증/권한
+
+1. 회원가입
+2. 로그인
+3. 로그아웃
+4. `/auth/me`
+5. 세션 생성/만료/revoke
+6. 관리자 권한 가드
+7. 비밀번호 재설정 토큰 생성
+8. dev/staging 로그 메일 발송
+9. prod 외부 메일 provider 인터페이스 반영
+
+## 3순위: 영양제 기본 CRUD
+
+1. 영양제 직접 등록
+2. 영양제 목록 조회
+3. 영양제 상세 조회
+4. 영양제 수정
+5. 영양제 삭제
+
+## 4순위: OCR 파이프라인
+
+1. presigned upload 발급
+2. 업로드 완료 처리
+3. OCR job 생성
+4. Worker에서 EasyOCR 실행
+5. OCR 상태 polling API
+6. OCR 결과 검수/수정 저장
+7. OCR 원본 파일 삭제
+
+## 5순위: 분석 파이프라인
+
+1. 분석 실행 요청
+2. 완전 일치 재사용 판정
+3. 분석 작업 큐 등록
+4. 분석 상태 polling API
+5. 분석 결과 저장/조회
+6. 결과 DTO v1 적용
+
+## 6순위: 문의/운영
+
+1. 사용자 문의 등록
+2. 사용자 문의 목록 조회
+3. 관리자 문의 목록 조회
+4. 문의 상태 변경
+5. 내부 메모 저장
+6. 관련 분석/영양제 링크 확인
+
+## 7순위: 계정 삭제/배치
+
+1. 탈퇴 요청 처리
+2. 즉시 로그인 차단
+3. `DELETED_PENDING` 전환
+4. 30일 후 hard delete 배치
+5. 만료 세션 정리
+6. 만료 reset token 정리
+7. 임시 OCR 파일 cleanup
+
+---
+
+# 9. 스프린트 단위 권장 개발 순서
+
+가정: **1스프린트 = 2주**, 개인 또는 소규모 개발 기준.
+
+## Sprint 0
+
+* 저장소 초기화
+* Next.js/FastAPI 기본 실행
+* Docker Compose 초안
+* lint/format/test 기본 설정
+* env 템플릿 초안
+
+## Sprint 1
+
+* DB/Redis 연결 골격
+* 공통 응답/에러 포맷
+* 인증/세션
+* 권한 가드
+* `/auth/me`
+* 비밀번호 재설정 기본 흐름
+
+## Sprint 2
+
+* 영양제 CRUD API
+* 영양제 목록/상세/등록/수정 화면
+* 대시보드 기본 구성
+
+## Sprint 3
+
+* R2 업로드 흐름
+* OCR job 생성
+* EasyOCR worker 연동
+* OCR 상태 화면
+* OCR 검수 화면
+
+## Sprint 4
+
+* 분석 실행/상태/결과
+* 결과 DTO v1 반영
+* 재사용 판정
+* 결과 화면 연결
+
+## Sprint 5
+
+* 문의 등록/목록
+* 관리자 문의 관리
+* 탈퇴/하드 삭제/cleanup cron
+* P0 통합 테스트
+
+## Sprint 6
+
+* 버그 수정
+* 에러 메시지 정리
+* 운영 로그 정리
+* 문서 정리
+* 11단계 배포 입력 정리
+
+---
+
+# 10. ERD / API / 화면 구조와의 연결 기준
+
+## 인증 영역
+
+* ERD: `users`, `user_sessions`, `password_reset_tokens`
+* API: `/auth/*`
+* 화면: 로그인, 회원가입, 비밀번호 재설정, 계정 관리
+
+## 영양제 영역
+
+* ERD: `supplements`
+* API: `/supplements/*`
+* 화면: 목록, 상세, 등록, 수정
+
+## OCR 영역
+
+* ERD: `supplement_ocr_jobs`
+* API: `/ocr/*`
+* 화면: 업로드, 상태, 검수
+
+## 분석 영역
+
+* ERD: `analysis_runs`, `analysis_targets`, `analyses`
+* API: `/analyses/*`
+* 화면: 분석 실행, 진행 상태, 결과
+
+## 문의/운영 영역
+
+* ERD: `inquiries`, `admin_action_logs`
+* API: `/inquiries/*`, `/admin/inquiries/*`
+* 화면: 사용자 문의 목록, 관리자 문의 관리
+
+---
+
+# 11. 이번 구조에서 주의할 구현 원칙
+
+1. 프론트는 **라우트와 기능 모듈을 분리**한다.
+2. 백엔드는 **API / service / repository / integration** 계층을 분리한다.
+3. OCR은 현재 환경상 **EasyOCR 기본 채택**으로 진행하되, 품질 문제가 크면 PaddleOCR 재검토 여지를 남긴다.
+4. 메일 발송은 추상 인터페이스를 두고 환경별 구현을 분리한다.
+5. P0에서는 타입 자동 생성을 미루고, 응답 구조를 문서와 수동 타입으로 엄격히 맞춘다.
+6. 환경변수는 앱별로 분리하고 운영 secret은 코드에 포함하지 않는다.
+7. 공통 응답/에러 포맷은 예외 없이 전 API에 동일 적용한다.
+
+---
+
+## 1. 이번 단계 확정 사항
+
+1. 프로젝트는 **monorepo 구조**로 확정한다.
+2. 루트 구조는 `apps / packages / infra / scripts / docs` 기준으로 확정한다.
+3. 프론트엔드는 `app / components / features / lib / hooks / stores / types` 구조로 확정한다.
+4. 백엔드는 `api / core / db / schemas / services / integrations / worker / common` 구조로 확정한다.
+5. 공통 모듈은 **계약 공유 중심**으로 `packages/contracts`에 둔다.
+6. 환경변수는 **루트 개요 + app별 `.env.example` 분리** 구조로 확정한다.
+7. API 응답 포맷은 `success / data / meta`, 에러 포맷은 `success / code / message / detail / request_id`로 확정한다.
+8. P0 구현 순서는 **공통기반 → 인증 → 영양제 CRUD → OCR → 분석 → 문의/운영 → 탈퇴/배치**로 확정한다.
+9. 스프린트는 **2주 단위 + 주 1회 체크**로 확정한다.
+10. OCR 엔진은 **EasyOCR 기본 채택**으로 확정한다.
+11. 메일 발송은 **dev/staging 로그 기반, prod 외부 메일 서비스**로 확정한다.
+12. 타입 관리는 **P0 수동 타입, P1 이후 OpenAPI 자동 생성 검토**로 확정한다.
+
+---
+
+## 2. 다음 단계 입력으로 넘길 핵심 요약
+
+* 기준 스택:
+
+  * **Next.js(App Router) + FastAPI + PostgreSQL + Redis + Cloudflare R2 + Vercel/Render**
+* 저장소 구조:
+
+  * `apps/web`
+  * `apps/backend`
+  * `packages/contracts`
+  * `infra`
+  * `scripts`
+  * `docs`
+* 프론트 구조:
+
+  * `app / components / features / lib / hooks / stores / types`
+* 백엔드 구조:
+
+  * `api / core / db / schemas / services / integrations / worker / common`
+* OCR:
+
+  * **EasyOCR**
+  * worker 실행
+  * OCR 검수 후 저장
+* 메일:
+
+  * **dev/staging: logger_mailer**
+  * **prod: provider_mailer**
+* 공통 응답 포맷:
+
+  * 성공: `{ success: true, data, meta }`
+  * 실패: `{ success: false, code, message, detail, request_id }`
+* P0 구현 순서:
+
+  * 공통 기반
+  * 인증/권한
+  * 영양제 CRUD
+  * OCR
+  * 분석
+  * 문의/운영
+  * 탈퇴/배치
+* 스프린트:
+
+  * **2주 단위**
+  * 주 1회 점검
+
+---
+
+## 3. 추가 확인 필요 항목
+
+1. **prod에서 사용할 외부 메일 서비스 종류**
+
+   * 예: 어떤 메일 provider를 쓸지
+   * 이 항목은 11단계 인프라/배포 설계에서 확정하면 된다.
+
+2. **EasyOCR 실제 정확도 검증**
+
+   * 현재 선택은 개발 환경과 구현 속도를 기준으로 한 최적안이다.
+   * 다만 실제 영양제 사진 샘플로 검증했을 때 정확도가 부족하면 PaddleOCR 재검토가 필요할 수 있다.
+
+---
+
+## 4. 충돌 가능 항목
+
+1. 추후 OCR 정확도 요구가 높아지면 `integrations/ocr` 내부 구조가 EasyOCR 중심에서 PaddleOCR 또는 복수 엔진 구조로 바뀔 수 있다.
+2. prod 메일 provider가 확정되면 `env/backend`와 `integrations/mail/provider_mailer.py` 구조가 추가 구체화될 수 있다.
+3. P1 이후 OpenAPI 타입 자동 생성 도입 시 프론트 `types`와 `lib/api` 일부 구조가 조정될 수 있다.
+4. 향후 관리자 기능 범위가 늘어나면 `app/(admin)`과 `admin_service.py`가 더 세분화될 수 있다.
+
+---
+
+이제 다음으로는 **9단계 DB 연결 설계**로 넘어가면 됩니다.

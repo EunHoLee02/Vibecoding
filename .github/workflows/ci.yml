@@ -1,0 +1,136 @@
+name: welltrack-ci
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+          API_BASE_URL: http://localhost:8000
+        run: npm run build
+
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/backend
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: welltrack_ci
+          POSTGRES_USER: welltrack
+          POSTGRES_PASSWORD: welltrack
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U welltrack -d welltrack_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Write CI env
+        run: |
+          cat <<'EOF' > .env
+          APP_NAME=well-track-backend
+          APP_ENV=ci
+          APP_DEBUG=false
+          API_V1_PREFIX=/api/v1
+          BACKEND_CORS_ORIGINS=http://localhost:3000
+          BACKEND_PUBLIC_BASE_URL=http://localhost:8000
+          LOCAL_STORAGE_DIR=.storage
+          DATABASE_URL=postgresql+psycopg://welltrack:welltrack@localhost:5432/welltrack_ci
+          DATABASE_ECHO=false
+          DATABASE_POOL_SIZE=5
+          DATABASE_MAX_OVERFLOW=10
+          DATABASE_POOL_TIMEOUT=30
+          DATABASE_POOL_RECYCLE=1800
+          DATABASE_POOL_PRE_PING=true
+          REDIS_URL=redis://localhost:6379/0
+          AUTH_REDIS_PREFIX=auth:session
+          AUTH_SESSION_COOKIE_NAME=sid
+          AUTH_SESSION_TTL_MINUTES=10080
+          AUTH_COOKIE_SECURE=false
+          AUTH_COOKIE_HTTPONLY=true
+          AUTH_COOKIE_SAMESITE=lax
+          AUTH_COOKIE_DOMAIN=
+          PASSWORD_MIN_LENGTH=8
+          PASSWORD_MAX_LENGTH=128
+          MAIL_MODE=logger
+          OCR_ENGINE=paddleocr
+          OCR_LANG_LIST=ko,en
+          EOF
+
+      - name: Run migrations
+        run: alembic upgrade head
+
+      - name: Import smoke test
+        run: python -c "from app.main import app; print(app.title)"
+
+      - name: Start server
+        run: |
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 > backend.out.log 2> backend.err.log &
+          sleep 10
+
+      - name: Health smoke test
+        run: |
+          python - <<'PY'
+          import urllib.request
+
+          for url in [
+              "http://127.0.0.1:8000/health/live",
+              "http://127.0.0.1:8000/health/ready",
+          ]:
+              with urllib.request.urlopen(url, timeout=10) as response:
+                  print(url, response.status)
+                  assert response.status == 200
+          PY

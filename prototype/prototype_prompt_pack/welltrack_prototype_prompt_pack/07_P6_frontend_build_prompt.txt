@@ -1,0 +1,160 @@
+이번에는 P6단계만 수행해줘.
+아직 다음 단계는 수행하지 말아줘.
+
+[Prototype Decision Register]
+- prototype.mode:
+  final_value: prototype_only
+  source_stage: P0
+  supersedes: full_service_scope
+  rationale: 이번 작업은 정식 서비스 개발이 아니라 핵심 기능 시연용 프로토타입 제작이 목적이다.
+  status: 확정
+- prototype.auth_mode:
+  final_value: none
+  source_stage: P0
+  supersedes: login_signup_flows
+  rationale: 프로토타입에서는 로그인/회원가입 없이 핵심 기능만 보여준다.
+  status: 확정
+- prototype.admin_mode:
+  final_value: none
+  source_stage: P0
+  supersedes: admin_console
+  rationale: 관리자 기능은 프로토타입 범위에서 제외한다.
+  status: 확정
+- prototype.payment_mode:
+  final_value: none
+  source_stage: P0
+  supersedes: billing_subscription
+  rationale: 결제 기능은 프로토타입 범위에서 제외한다.
+  status: 확정
+- prototype.core_flow:
+  final_value: input_to_analysis_to_result
+  source_stage: P0
+  supersedes: full_user_journey
+  rationale: 사용자가 영양제 정보를 입력하거나 업로드하고, 분석을 실행한 뒤, 결과를 확인하는 핵심 흐름만 시연한다.
+  status: 확정
+- prototype.backend_mode:
+  final_value: required
+  source_stage: P0
+  supersedes: frontend_only_mock
+  rationale: 실제 기능 시연을 위해 프론트엔드와 백엔드를 함께 포함한다.
+  status: 확정
+- prototype.analysis_mode:
+  final_value: rule_based_first
+  source_stage: P0
+  supersedes: llm_first_analysis
+  rationale: 프로토타입은 빠른 시연이 목적이므로 분석은 rule-based를 우선 적용한다.
+  status: 확정
+- prototype.ocr_mode:
+  final_value: stub_or_mock_allowed
+  source_stage: P0
+  supersedes: full_ocr_required
+  rationale: 실제 OCR 연동보다 기능 흐름 시연이 우선이다.
+  status: 확정
+- prototype.result_persistence:
+  final_value: optional
+  source_stage: P0
+  supersedes: persistent_user_history
+  rationale: 프로토타입에서는 결과 저장이 필수가 아니다.
+  status: 확정
+
+[이전 단계 authoritative_updates]
+(P5 응답의 authoritative_updates YAML을 그대로 붙여넣기)
+
+[이전 단계 확정본 요약]
+(P5 응답의 아래 2개만 붙여넣기)
+- 이번 단계 확정 사항
+- 다음 단계 입력으로 넘길 핵심 요약
+
+[이번 단계 추가 입력]
+- 이번 단계 목표:
+  1. P2에서 확정한 화면 구조, P3에서 확정한 API 계약, P4에서 확정한 기술 스택, P5에서 확정한 백엔드 구현 기준을 바탕으로 프론트엔드 구현 지시문을 일관되게 만든다.
+  2. 페이지 이름, 컴포넌트 역할, 상태 처리, API 연결 방식, 결과 렌더링 구조를 임의로 바꾸지 못하게 한다.
+- 프론트엔드 구현 범위:
+  1. 시작/입력 화면
+  2. 업로드 또는 샘플 선택 화면
+  3. 분석 진행 상태 또는 로딩 상태
+  4. 결과 화면
+- 프론트엔드에서 제외할 범위:
+  1. 로그인/회원가입 화면
+  2. 관리자 화면
+  3. 결제 화면
+  4. 문의/운영 화면
+  5. 사용자 설정 화면
+- 반드시 구현해야 하는 사용자 동작:
+  1. 영양제 직접 입력
+  2. 성분 행 추가/삭제
+  3. 샘플 업로드 또는 샘플 선택
+  4. 분석 실행 버튼 클릭
+  5. 결과 확인
+  6. 다시 입력하기 또는 초기화
+- 결과 화면에서 반드시 렌더링해야 하는 영역:
+  1. 입력한 영양제 목록
+  2. duplicated_ingredients
+  3. risk_items
+  4. timing_guides
+  5. summary_text
+- 프론트엔드 상태 처리 요구:
+  1. 초기 빈 상태
+  2. 입력 검증 오류 상태
+  3. 분석 요청 중 로딩 상태
+  4. 업로드/mock 처리 중 상태
+  5. 분석 실패 상태
+  6. 결과 성공 상태
+- API 연결 요구:
+  1. P5에서 확정한 endpoint만 사용
+  2. request body 구조를 임의로 바꾸지 않는다.
+  3. response shape을 프론트 편의대로 바꾸지 않는다.
+  4. 결과 화면은 API 응답 필드를 그대로 사용해 렌더링한다.
+- UI/UX 원칙:
+  1. 시연 우선
+  2. 단순하고 직관적
+  3. 불필요한 라우트 분기 최소화
+  4. 과도한 디자인 시스템 확장 금지
+  5. 데스크톱 우선, 모바일은 깨지지 않는 정도면 충분
+- 코드 작성 방식 요구:
+  1. 파일 단위로 작성
+  2. 각 파일 역할 설명 포함
+  3. 페이지와 주요 컴포넌트를 구분
+  4. 실제로 실행 가능한 수준의 코드 초안이어야 함
+  5. 한 번에 전체 프론트를 다 만들라고 하지 말고 기능 묶음 단위로 순서대로 작성
+- 프론트엔드 테스트 요구:
+  1. 화면별 테스트 포인트 목록 포함
+  2. 입력 검증, 버튼 클릭, 로딩, 결과 표시를 최소 검증 포인트로 포함
+- 표현 제한:
+  1. 의료 진단/처방처럼 보이는 UI 문구 금지
+  2. 일반 가이드 수준 표현 유지
+  3. 과다 복용 확정 대신 과다 가능성 또는 주의 필요 수준 사용
+
+[이번 단계 프롬프트]
+P6단계 프로토타입 프론트엔드 구현 지시문 작성만 수행해줘.
+
+반드시 아래 형식으로 정리해줘.
+1. 이번 단계에서 구현할 프론트엔드 기능 범위
+2. 프론트엔드 파일 구조
+3. 파일별 역할 설명
+4. 구현 순서
+5. 페이지별 구현 지시
+6. 주요 컴포넌트 구현 지시
+7. 입력/검증/상태 처리 지시
+8. API 연동 지시
+9. 화면별 테스트 포인트 목록
+10. 다음 단계에서 바로 사용할 프론트엔드 구현 고정 요약
+
+[공통 강제 규칙]
+- 로그인, 관리자, 결제, 문의, 운영 기능 화면/코드는 포함하지 말아줘.
+- 프론트엔드는 프로토타입 시연에 필요한 최소 범위만 구현하게 지시해줘.
+- P2에서 확정한 화면 이름, 흐름, CTA 이름을 바꾸지 말아줘.
+- P3에서 확정한 필드명, 상태값, 응답 구조를 바꾸지 말아줘.
+- P5에서 확정한 endpoint 이름과 request/response 구조를 그대로 사용해줘.
+- 결과 화면은 API 응답을 가공 최소화하여 바로 렌더링하는 방향으로 작성해줘.
+- 한 번에 전체 프론트를 다 만들라고 하지 말고, 페이지/기능 묶음 단위로 순서대로 만들게 해줘.
+- 과도한 전역 상태관리, 복잡한 폴더 구조, 과한 UI 추상화는 금지해줘.
+- Prototype Decision Register와 P5 authoritative_updates를 최우선으로 사용해줘.
+- 마지막에 반드시 아래 7개를 포함해줘.
+  1. 이번 단계 확정 사항
+  2. 다음 단계 입력으로 넘길 핵심 요약
+  3. 추가 확인 필요 항목
+  4. 충돌 가능 항목
+  5. 바로 다음 단계 진행 가능 항목
+  6. 단계 상태
+  7. authoritative_updates YAML

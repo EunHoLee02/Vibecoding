@@ -1,0 +1,81 @@
+[실행용 축약 템플릿 - 7단계 기술 스택 및 아키텍처 확정]
+
+이번에는 [7단계]만 수행해줘.
+아직 다음 단계는 수행하지 말아줘.
+
+[Canonical Decision Register]
+(최신 frozen_values만 남기고 붙여넣기)
+
+[이전 단계 authoritative_updates]
+(직전 단계 YAML 그대로 붙여넣기)
+
+[이전 단계 확정본 요약]
+- 이번 단계 확정 사항:
+- 다음 단계 입력으로 넘길 핵심 요약:
+
+[이번 단계 입력 체크리스트]
+- 1~6단계 확정본
+- 후보 제약사항
+- Canonical Decision Register
+
+[이번 단계 추가 입력]
+- 새로 확정할 값:
+- 변경할 값:
+- deprecated 처리할 값:
+- 유지할 frozen_values:
+- 추가 제약/예외:
+- 운영/보안/권한 관련 메모:
+
+[이번 단계 프롬프트]
+후보는 최대 2개만 허용해줘.
+후보 A와 B를 고정된 평가 기준(서비스 적합도 35, 단독 개발 생산성 25, 운영 단순성 20, 확장성 20)으로 점수화해줘.
+총점 최고안을 채택하고, 동점이면 후보 A를 채택해줘.
+채택 후에는 재평가하지 말고 frozen_values에 고정해줘.
+
+[출력에 반드시 포함할 섹션]
+- 후보 비교
+- 평가 기준 점수
+- 최종 확정 조합
+- 대안 조합(최대 1개)
+- 프론트엔드 스택
+- 백엔드 스택
+- DB
+- 캐시/큐
+- 인증 저장소
+- 파일 저장소
+- 배포 플랫폼
+- 비동기 구조
+- env 분리 방식
+- rate limit 최종 수치
+- 결과 API DTO 고정 여부
+- 최종 확정안 1줄 요약
+
+- 이번 단계 확정 사항
+- 다음 단계 입력으로 넘길 핵심 요약
+- 추가 확인 필요 항목
+- 충돌 가능 항목
+- 바로 다음 단계 진행 가능 항목
+- 단계 상태
+- authoritative_updates YAML
+
+[authoritative_updates YAML 템플릿]
+authoritative_updates:
+  frozen_values:
+    key: value
+  supersedes:
+    - old_source -> new_source
+  deprecated:
+    - deprecated_key_or_rule
+  carry_forward_only:
+    - key1
+    - key2
+  do_not_carry_forward:
+    - key3
+    - key4
+
+stage_status:
+  maturity: draft|provisional|minimum_complete|fully_verified
+  unresolved_conflicts:
+    - none
+  missing_p0_items:
+    - none

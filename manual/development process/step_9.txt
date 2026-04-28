@@ -1,0 +1,714 @@
+좋습니다.
+아래를 **9단계 DB 연결 설계 최종 확정본**으로 쓰시면 됩니다.
+기준은 8단계 프로젝트 구조 및 구현 계획 확정본, 기준 스택, 공통 응답 포맷, P0 구현 순서, OCR/분석/탈퇴 배치 흐름을 그대로 이어받은 내용입니다. 
+
+---
+
+# 9단계 DB 연결 설계 최종 확정
+
+## 충돌 항목
+
+현재까지 확정된 8단계 구조와 직접 충돌하는 항목은 없음.
+단, 본 단계에서는 기존 “추가 확인 필요”로 남겨졌던 항목 중 아래를 추천안으로 확정 반영한다.
+
+1. soft delete 적용 대상 확정
+2. 상태값 문자열 규칙 확정
+3. 운영 DB 호스팅 제공자 확정
+4. CI 테스트 DB 방식 확정
+5. OCR / 분석 job 중복 방지 기준 확정
+
+8단계 기준 스택은 **Next.js(App Router) + FastAPI + PostgreSQL + Redis + Cloudflare R2 + Vercel/Render**이고, 인증은 **서버 세션 + Redis + `user_sessions`**, 백엔드 구조는 `api / core / db / schemas / services / integrations / worker / common`, 환경변수는 **루트 개요 + app별 `.env.example` 분리** 구조로 이미 확정되어 있다. 또한 P0 구현 순서는 **공통기반 → 인증 → 영양제 CRUD → OCR → 분석 → 문의/운영 → 탈퇴/배치** 순서다. 
+
+---
+
+## 1. DB 선택 이유
+
+### 1-1. 추천 DB 종류
+
+* **주 DB: PostgreSQL**
+* **보조 저장소: Redis**
+* **파일 저장소: Cloudflare R2**
+* **운영 DB 호스팅: Render Managed PostgreSQL**
+* **로컬/테스트 DB: Docker PostgreSQL**
+
+### 1-2. PostgreSQL 선택 이유
+
+1. 현재 기준 스택과 완전히 일치한다.
+2. 사용자, 세션, 영양제, OCR 작업, 분석 작업, 문의, 관리자 처리 이력처럼 **관계형 데이터 + 상태 전이 + 트랜잭션 일관성**이 중요한 구조에 적합하다.
+3. 탈퇴 유예, 세션 revoke, 분석 재사용, 문의 상태 변경 등 P0 핵심 기능에서 무결성이 중요하다.
+4. Alembic 기반 마이그레이션과 SQLAlchemy ORM 조합이 FastAPI 구조에 자연스럽다.
+5. 운영/백업/복구/관리형 호스팅 선택지가 넓어 MVP 이후 확장도 무난하다.
+
+### 1-3. Redis 역할
+
+Redis는 주 DB가 아니라 아래 용도로만 사용한다.
+
+* 세션 저장
+* 작업 큐
+* 임시 상태/캐시
+* rate limit / lock 보조
+
+즉, **정본 데이터(source of truth)는 PostgreSQL**로 유지한다.
+
+### 1-4. ORM 또는 Query Builder 선택 이유
+
+* **기본 선택: SQLAlchemy 2.0 ORM**
+* **마이그레이션: Alembic**
+* **드라이버: psycopg**
+* **예외 허용: 성능 민감한 구간은 SQLAlchemy Core 보조 사용**
+
+선택 이유:
+
+1. 8단계에서 백엔드가 `db/models`, `db/repositories`, `services`, `alembic` 구조로 확정되어 있어 ORM과 가장 잘 맞는다. 
+2. P0에서는 생산성과 유지보수성이 성능 미세 최적화보다 우선이다.
+3. service / repository 계층 분리가 쉽다.
+4. Alembic과 연계가 안정적이다.
+
+결론:
+
+* **기본 DB 접근 방식은 SQLAlchemy ORM**
+* **복잡 조회/벌크 작업만 SQLAlchemy Core 보조 허용**
+* 별도 Query Builder 중심 설계는 채택하지 않는다.
+
+---
+
+## 2. 연결 구조 설명
+
+### 2-1. 전체 연결 구조
+
+* **web**
+
+  * DB 직접 연결 없음
+  * backend API만 호출
+* **backend API**
+
+  * PostgreSQL 직접 연결
+  * Redis 연결
+  * R2 연결
+* **worker**
+
+  * PostgreSQL 직접 연결
+  * Redis 연결
+  * R2 연결
+* **cron / cleanup task**
+
+  * PostgreSQL + Redis 기반 정리 작업 수행
+
+즉 구조는 아래와 같다.
+
+```text
+web -> backend API -> PostgreSQL
+                  -> Redis
+                  -> R2
+
+worker ----------> PostgreSQL
+                -> Redis
+                -> R2
+```
+
+### 2-2. 백엔드 DB 연결 구조
+
+`apps/backend` 기준 권장 구성:
+
+```text
+apps/backend/
+├─ app/
+│  ├─ db/
+│  │  ├─ base.py
+│  │  ├─ session.py
+│  │  ├─ models/
+│  │  └─ repositories/
+│  ├─ services/
+│  ├─ worker/
+│  └─ api/
+├─ alembic/
+└─ alembic.ini
+```
+
+역할:
+
+* `base.py`
+
+  * SQLAlchemy Base
+  * naming convention 정의
+* `session.py`
+
+  * engine 생성
+  * SessionLocal 생성
+  * `get_db()` dependency 제공
+* `models/`
+
+  * ORM 모델 정의
+* `repositories/`
+
+  * DB 조회/생성/수정/삭제 전담
+* `services/`
+
+  * 비즈니스 로직
+* `worker/`
+
+  * OCR/분석/cleanup 비동기 작업
+
+이 구조는 8단계의 백엔드 구조 확정본과 일치한다. 
+
+### 2-3. 세션/트랜잭션 흐름
+
+#### API 요청
+
+1. 요청 진입
+2. `get_db()`로 Session 생성
+3. service에서 repository 호출
+4. 성공 시 commit
+5. 실패 시 rollback
+6. 응답 후 close
+
+#### Worker 작업
+
+1. task 시작
+2. 별도 Session 생성
+3. OCR/분석 상태 전이 및 결과 저장
+4. 성공 시 commit
+5. 실패 시 rollback
+6. task 종료 후 close
+
+### 2-4. sync / async 선택
+
+* **DB 연결은 sync SQLAlchemy Session 기준으로 확정**
+* 이유:
+
+  1. FastAPI + Alembic + worker + seed 구조에서 단순하다
+  2. 노트북 단독 개발 환경에서 디버깅이 쉽다
+  3. P0 규모에서 충분하다
+
+### 2-5. 커넥션 풀 관리 방식
+
+#### backend API 기본값
+
+* `pool_size=5`
+* `max_overflow=10`
+* `pool_timeout=30`
+* `pool_recycle=1800`
+* `pool_pre_ping=true`
+
+#### worker 기본값
+
+* `pool_size=2`
+* `max_overflow=4`
+* `pool_timeout=30`
+* `pool_recycle=1800`
+* `pool_pre_ping=true`
+
+운영 원칙:
+
+1. worker 풀은 API보다 작게 유지
+2. 전체 연결 수는 DB 허용 connection 수보다 항상 작아야 함
+3. staging/prod에서 실제 DB 플랜에 맞춰 조정 가능
+4. 필요 시 11단계에서 PgBouncer 재검토 가능
+
+### 2-6. 트랜잭션 처리 기준
+
+#### 반드시 한 트랜잭션으로 처리
+
+* 회원가입
+* 로그인 + 세션 row 저장
+* 영양제 등록/수정/삭제
+* 문의 등록
+* 관리자 문의 상태 변경 + 내부 메모 + 관리자 액션 로그
+* 탈퇴 요청
+
+  * 사용자 상태 변경
+  * 세션 revoke
+  * 삭제 예정 상태 전환
+
+#### 외부 연동이 섞이는 경우
+
+OCR, 분석, R2, 메일은 DB와 분산 트랜잭션으로 묶지 않는다.
+
+처리 원칙:
+
+1. DB 상태 먼저 기록
+2. commit
+3. 외부 작업 enqueue/call
+4. 실패 시 상태값을 `failed` 계열로 전이하고 재시도 또는 운영 대응
+
+예:
+
+* OCR job 생성 -> commit -> Redis queue 등록
+* 등록 실패 -> OCR job 상태를 `queue_failed`로 변경
+
+### 2-7. 공통 컬럼 정책
+
+기본 컬럼 정책:
+
+* `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`
+* `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`
+* `deleted_at TIMESTAMPTZ NULL`
+
+운영 원칙:
+
+1. `created_at`은 DB 기본값 사용
+2. `updated_at`은 ORM 갱신 + bulk update 시 명시적 갱신
+3. `deleted_at`은 soft delete 테이블에만 둔다
+
+### 2-8. soft delete 적용 대상 확정
+
+#### soft delete 사용
+
+* `users`
+* `supplements`
+
+#### soft delete 사용 안 함
+
+* `user_sessions`
+* `password_reset_tokens`
+* `supplement_ocr_jobs`
+* `analysis_runs`
+* `analysis_targets`
+* `analyses`
+* `inquiries`
+* `admin_action_logs`
+
+확정 이유:
+
+* `users`: 탈퇴 즉시 차단 + 30일 후 hard delete 정책과 일치
+* `supplements`: 사용자 실수 삭제 복구 여지 확보
+* 세션/토큰: revoke/expire/cleanup이 더 적절
+* OCR/분석/문의/관리자 로그: 상태/이력 보존이 우선
+
+### 2-9. enum / 상태값 관리 방식 확정
+
+#### 저장 방식
+
+* **Python Enum**
+
+  * 이름: 대문자
+  * 값: 소문자 snake_case
+* **DB 저장값**
+
+  * `VARCHAR`
+  * `CHECK constraint` 사용
+* **API 응답값**
+
+  * 소문자 snake_case
+
+예:
+
+```python
+class OcrJobStatus(str, Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+```
+
+채택 이유:
+
+1. P0 단계에서 변경이 쉬움
+2. Alembic migration이 단순함
+3. 프론트와 테스트에서 문자열 사용이 일관됨
+
+이번 단계에서는 PostgreSQL native ENUM은 채택하지 않는다.
+
+### 2-10. OCR / 분석 job 중복 방지 기준 확정
+
+#### OCR job
+
+기준:
+
+* `user_id + file_fingerprint`
+
+정책:
+
+* 같은 사용자가 같은 파일을 다시 업로드했고
+* 기존 job 상태가 `pending` 또는 `processing`이면
+* 새 row를 생성하지 않고 기존 job 재사용
+
+#### 분석 job
+
+기준:
+
+* `user_id`
+* 선택 영양제 ID 집합
+* 각 영양제 `updated_at`
+* 분석 규칙 버전
+
+이 조합으로 `analysis_signature`를 생성해 저장한다.
+
+정책:
+
+* 동일 `analysis_signature`이면 새 run을 만들지 않고
+* **완전 일치 재사용** 처리
+
+이 기준은 8단계의 “분석 실행 → 완전 일치 재사용 판정 → 작업 큐 등록” 흐름과 맞춘 확정안이다. 
+
+### 2-11. 개발 / 스테이징 / 운영 DB 분리 전략
+
+#### local
+
+* Docker PostgreSQL
+* DB 예시: `app_local`
+
+#### test / CI
+
+* Docker PostgreSQL service container
+* DB 예시: `app_test`
+
+#### staging
+
+* Render Managed PostgreSQL
+* 운영과 완전 분리
+* 실데이터 사용 금지
+
+#### prod
+
+* Render Managed PostgreSQL
+* staging과 완전 분리
+* 자동 백업 활성화
+* 최소 권한 계정 사용
+
+원칙:
+
+1. 환경 간 DB 공유 금지
+2. staging에서 prod DB 접근 금지
+3. 환경별 env 완전 분리
+4. migration은 환경별 순차 적용
+
+---
+
+## 3. 환경변수 예시
+
+8단계에서 환경변수는 **루트 개요 + app별 `.env.example` 분리** 구조로 확정돼 있으므로, DB 관련 값은 backend/worker 중심으로 아래처럼 구성한다. 
+
+### 3-1. 루트 `.env.example`
+
+```env
+APP_ENV=local
+TZ=Asia/Seoul
+
+DATABASE_URL=
+REDIS_URL=
+
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=app_local
+DB_USER=app_user
+DB_PASSWORD=app_password
+```
+
+### 3-2. `env/backend/.env.example`
+
+```env
+APP_ENV=local
+APP_NAME=nutrition-app-backend
+APP_DEBUG=true
+TZ=Asia/Seoul
+
+DATABASE_URL=postgresql+psycopg://app_user:app_password@localhost:5432/app_local
+TEST_DATABASE_URL=postgresql+psycopg://app_user:app_password@localhost:5432/app_test
+ALEMBIC_DATABASE_URL=postgresql+psycopg://app_user:app_password@localhost:5432/app_local
+
+DATABASE_ECHO=false
+DATABASE_POOL_SIZE=5
+DATABASE_MAX_OVERFLOW=10
+DATABASE_POOL_TIMEOUT=30
+DATABASE_POOL_RECYCLE=1800
+DATABASE_POOL_PRE_PING=true
+
+REDIS_URL=redis://localhost:6379/0
+
+SESSION_SECRET=
+SESSION_COOKIE_NAME=sid
+
+R2_ENDPOINT=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET=
+R2_PUBLIC_BASE_URL=
+
+MAIL_MODE=logger
+MAIL_PROVIDER=
+MAIL_FROM=
+```
+
+### 3-3. `env/worker/.env.example`
+
+```env
+APP_ENV=local
+APP_NAME=nutrition-app-worker
+APP_DEBUG=true
+TZ=Asia/Seoul
+
+DATABASE_URL=postgresql+psycopg://app_user:app_password@localhost:5432/app_local
+
+DATABASE_ECHO=false
+DATABASE_POOL_SIZE=2
+DATABASE_MAX_OVERFLOW=4
+DATABASE_POOL_TIMEOUT=30
+DATABASE_POOL_RECYCLE=1800
+DATABASE_POOL_PRE_PING=true
+
+REDIS_URL=redis://localhost:6379/1
+
+OCR_ENGINE=easyocr
+OCR_LANG_LIST=ko,en
+OCR_DEVICE=cpu
+```
+
+### 3-4. env 운영 원칙
+
+1. 운영은 `DATABASE_URL` 기준으로 통일
+2. frontend에는 DB 관련 비밀값 노출 금지
+3. `TEST_DATABASE_URL`은 운영/개발 DB와 분리
+4. `ALEMBIC_DATABASE_URL` 미지정 시 `DATABASE_URL` 재사용 가능
+5. secret 값은 저장소 커밋 금지
+
+---
+
+## 4. 마이그레이션/시드 전략
+
+### 4-1. 로컬 개발용 DB 실행 방법
+
+#### Docker Compose 실행
+
+```bash
+docker compose up -d postgres redis
+```
+
+#### 상태 확인
+
+```bash
+docker compose ps
+```
+
+#### DB 접속 확인
+
+```bash
+docker compose exec postgres psql -U app_user -d app_local
+```
+
+#### 마이그레이션 적용
+
+```bash
+cd apps/backend
+alembic upgrade head
+```
+
+#### 시드 실행
+
+```bash
+cd apps/backend
+python -m app.db.seeds.run --seed base
+```
+
+### 4-2. 마이그레이션 전략
+
+원칙:
+
+1. 모든 DDL 변경은 Alembic으로만 관리
+2. 운영 DB 수동 스키마 변경 금지
+3. migration은 기능 단위로 작게 쪼갬
+4. destructive migration은 staging 검증 후 prod 반영
+5. FK/인덱스 이름은 명시적으로 작성
+
+권장 생성 순서:
+
+1. `users`
+2. `user_sessions`
+3. `password_reset_tokens`
+4. `supplements`
+5. `supplement_ocr_jobs`
+6. `analysis_runs`
+7. `analysis_targets`
+8. `analyses`
+9. `inquiries`
+10. `admin_action_logs`
+
+이 순서는 8단계에서 확정된 P0 기능 순서와 맞춘다. 인증/세션 → 영양제 → OCR → 분석 → 문의/운영 → 탈퇴/배치 순으로 구현하기 때문이다. 
+
+### 4-3. 인덱스 전략
+
+#### 기본 인덱스
+
+* 모든 FK 컬럼
+* `created_at` 기준 정렬이 잦은 목록
+* 상태 조회 빈도가 높은 `status` 컬럼
+
+#### 개별 권장 인덱스
+
+* `users(email)` unique
+* `user_sessions(user_id, expires_at)`
+* `password_reset_tokens(token_hash)` unique
+* `supplements(user_id, created_at desc)`
+* `supplement_ocr_jobs(user_id, status, created_at desc)`
+* `supplement_ocr_jobs(file_fingerprint)`
+* `analysis_runs(user_id, status, created_at desc)`
+* `analysis_runs(analysis_signature)`
+* `inquiries(user_id, created_at desc)`
+* `admin_action_logs(created_at desc)`
+
+#### soft delete 고려 인덱스
+
+* `users`
+* `supplements`
+
+이 두 테이블은 필요 시 `deleted_at IS NULL` 기준 partial index 검토
+
+### 4-4. 시드 데이터(seed) 전략
+
+#### base seed
+
+* 필수 공통 데이터만 삽입
+* 예:
+
+  * 기본 관리자 계정
+  * 기본 설정값
+  * 상태값 참고 데이터가 별도 테이블일 경우 그 초기값
+
+#### dev seed
+
+* 로컬 개발용 샘플 데이터
+* 예:
+
+  * 일반 사용자 2~3명
+  * 관리자 1명
+  * 영양제 샘플
+  * OCR/분석 테스트용 샘플 row
+
+#### staging seed
+
+* 데모 확인용 최소 샘플 데이터
+* 실사용 개인정보 금지
+
+#### prod seed
+
+* 필수 초기값만 허용
+* 샘플 데이터 삽입 금지
+
+### 4-5. CI 테스트 DB 전략 확정
+
+* **GitHub Actions 등 CI에서 Docker PostgreSQL service container 사용**
+* 순서:
+
+  1. Postgres 기동
+  2. `alembic upgrade head`
+  3. 최소 test seed
+  4. 테스트 실행
+
+이 방식은 shared test DB보다 격리와 재현성이 높아 P0 개발에 적합하다.
+
+### 4-6. rollback 전략
+
+1. 컬럼 삭제/타입 변경은 가급적 2단계로 분리
+2. 새 컬럼 추가 → 데이터 백필 → 코드 전환 → 구 컬럼 제거 순으로 처리
+3. 즉시 rollback 어려운 migration은 staging에서 선검증
+4. 운영 반영 전 `alembic current`, `alembic history` 확인
+
+---
+
+## 5. 주의사항 및 추가 확인 필요 항목
+
+### 5-1. 주의사항
+
+1. frontend는 DB 직접 접근 금지
+2. Redis는 주 저장소가 아님
+3. 외부 연동은 DB와 분산 트랜잭션으로 묶지 않음
+4. 상태값은 소문자 snake_case로 전 API/DB 통일
+5. soft delete는 `users`, `supplements`에만 적용
+6. migration과 seed는 분리
+7. bulk update 시 `updated_at` 누락 주의
+8. worker/API pool 총합이 DB 제한을 넘지 않도록 점검
+9. OCR/분석은 fingerprint/signature 기반으로 중복 생성 방지
+10. 운영 DB는 Render Managed PostgreSQL 기준으로 env/백업/권한 설계
+
+### 5-2. 추가 확인 필요 항목
+
+현재 기준으로 **없음**.
+기존 5개 미정 항목은 모두 추천안 기준으로 확정 반영 완료.
+
+---
+
+## 1. 이번 단계 확정 사항
+
+1. 주 DB는 PostgreSQL로 확정한다.
+2. 운영 DB 호스팅은 Render Managed PostgreSQL로 확정한다.
+3. 로컬/테스트 DB는 Docker PostgreSQL로 확정한다.
+4. DB 접근 방식은 SQLAlchemy 2.0 ORM + Alembic + psycopg로 확정한다.
+5. 복잡 조회/벌크 처리에는 SQLAlchemy Core 보조 사용을 허용한다.
+6. web은 DB에 직접 연결하지 않고 backend API만 사용한다.
+7. backend와 worker는 공통 DB 세션 팩토리를 공유하는 구조로 확정한다.
+8. connection pool 기본값은 API `5/10`, worker `2/4` 기준으로 확정한다.
+9. 트랜잭션은 단일 DB 변경은 ACID 트랜잭션, 외부 연동은 상태 전이 + 재시도 방식으로 확정한다.
+10. 공통 컬럼 정책은 `created_at`, `updated_at`, `deleted_at` 기준으로 확정한다.
+11. soft delete는 `users`, `supplements`에만 적용한다.
+12. 상태값은 DB/API 모두 소문자 snake_case로 통일한다.
+13. Python Enum은 이름 대문자, 값 소문자 snake_case로 통일한다.
+14. OCR job 중복 방지는 `user_id + file_fingerprint` 기준으로 확정한다.
+15. 분석 재사용/중복 방지는 `analysis_signature` 기준으로 확정한다.
+16. dev / test / staging / prod DB는 완전 분리 전략으로 확정한다.
+17. CI 테스트 DB는 Docker PostgreSQL service container 방식으로 확정한다.
+18. seed는 `base / dev / staging / prod` 전략으로 분리한다.
+
+---
+
+## 2. 다음 단계 입력으로 넘길 핵심 요약
+
+* DB: PostgreSQL
+* 운영 DB: Render Managed PostgreSQL
+* local/test DB: Docker PostgreSQL
+* ORM: SQLAlchemy 2.0 ORM
+* Migration: Alembic
+* Driver: psycopg
+* 보조 저장소: Redis
+* web은 DB 직접 연결 없음
+* backend/worker는 공통 Session 구조 사용
+* soft delete:
+
+  * 사용: `users`, `supplements`
+  * 미사용: 나머지 P0 핵심 테이블
+* 상태값:
+
+  * DB/API: 소문자 snake_case
+  * Python Enum: 이름 대문자 / 값 소문자 snake_case
+* 중복 방지:
+
+  * OCR: `user_id + file_fingerprint`
+  * 분석: `analysis_signature`
+* env:
+
+  * 루트 개요 + backend/worker `.env.example`
+* 로컬 실행:
+
+  * `docker compose up -d postgres redis`
+  * `alembic upgrade head`
+* CI:
+
+  * Docker PostgreSQL service container
+  * migration 후 테스트 실행
+
+---
+
+## 3. 추가 확인 필요 항목
+
+없음.
+
+---
+
+## 4. 충돌 가능 항목
+
+1. 추후 OCR 정확도 요구가 높아져 EasyOCR 외 복수 엔진 구조로 바뀌면 OCR 관련 job 메타데이터 컬럼이 일부 추가될 수 있다.
+2. 운영 DB 플랜 제한이 강하면 11단계에서 pool 값이 조정될 수 있다.
+3. 분석 재사용 기준이 더 엄격해지면 `analysis_signature` 구성 요소가 추가될 수 있다.
+4. 6단계 ERD 원문에서 특정 테이블 보존 정책이 다르게 확정되어 있었다면 `inquiries` 또는 분석 이력 보존 방식이 다시 조정될 수 있다.
+
+---
+
+## 바로 다음 단계 진행 가능 항목
+
+* 10a단계 인증 / 권한 구현 진행 가능
+* 10b단계 백엔드 P0 구현 선행 입력으로 사용 가능
+* Alembic 초기 migration 설계 시작 가능
+* `app/db/session.py`, `app/db/base.py`, `models/`, `repositories/` 파일 설계 시작 가능
+
+## 추가 확인 필요 항목
+
+없음.

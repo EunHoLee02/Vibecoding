@@ -1,0 +1,1635 @@
+아래는 **5단계 텍스트 와이어프레임 최종 확정본**입니다.
+이번 응답은 **5단계만** 다루며, 4단계 IA/네비게이션 확정본과 이번 대화에서 추가 확정한 내용을 반영했습니다.  
+
+---
+
+# 충돌 항목
+
+없음
+
+---
+
+# 1. 5단계 반영 기준 요약
+
+## 1-1. 이번 단계에서 확정 반영된 사항
+
+* `/app`은 **카드형 대시보드 구조**로 설계한다.
+* 직접 입력/수정 폼의 주요 필드는 **제품명 / 제조사 / 복용 정보 / 메모**로 확정한다.
+* 문의 접수에는 **파일 첨부를 포함하지 않는다**.
+* 비밀번호 찾기 기능은 **P0 포함**으로 하고, **이메일 링크 방식**을 사용한다.
+* 비밀번호 재설정 링크 유효시간은 **5분**으로 한다.
+* 영양제 삭제 기능은 **P0 포함**으로 한다.
+* 영양제 삭제는 **soft delete** 기준으로 설계한다.
+* 삭제된 영양제 상세는 **읽기 전용**으로 제공한다.
+* 삭제 복구는 **사용자와 운영자 모두 가능**하게 한다.
+* 문의 목록의 상태 필터는 **P1로 미룬다**.
+
+## 1-2. 공통 레이아웃 원칙
+
+### 비로그인 화면
+
+```text id="pzwvoh"
+[Top Header]
+  - Logo
+  - Login
+  - Sign up
+
+[Centered Main Content]
+  - Form Card / 안내 Card
+
+[Toast Layer]
+```
+
+### 로그인 후 데스크톱
+
+```text id="q7h4or"
+[Top Header]
+  - Logo(/app)
+  - Quick Register
+  - Start Analysis
+  - Inquiries
+  - User Menu
+
+[Page Body]
+  [Left Sidebar]
+    - Home
+    - Supplements
+    - Analyses
+    - Support
+  [Main Content]
+    - Breadcrumb Slot(P1)
+    - Page Title
+    - Summary / Form / List / Detail
+```
+
+### 로그인 후 모바일
+
+```text id="47g7i0"
+[Top App Bar]
+  - Hamburger
+  - Page Title
+  - Context CTA(optional)
+
+[Drawer Menu]
+  - Home
+  - Supplements
+  - Analyses
+  - Support
+  - Logout
+
+[Single Column Main Content]
+[Toast / Modal]
+```
+
+## 1-3. 공통 UI 규칙
+
+* 데스크톱은 **상단 네비 + 좌측 사이드바 + 본문** 구조를 기본으로 한다.
+* 모바일은 **햄버거 드로어 + 1열 레이아웃**을 기본으로 한다.
+* 하단 탭바는 사용하지 않는다.
+* Breadcrumb는 자리만 확보하고 실제 우선순위는 P1로 둔다.
+* 목록/상세/상태 화면은 모두 **빈 상태 / 오류 상태 / 로딩 상태**를 포함한다.
+* 제출형 화면은 가능한 경우 **sticky action bar**를 둔다.
+* 상태 처리 화면은 **상태 메시지 + 진행 표시 + 보조 안내 + 재시도/문의 CTA** 패턴을 사용한다.
+
+---
+
+# 2. 공개/인증 화면 와이어프레임
+
+## W-01. 로그인 `/login` [P0]
+
+### 레이아웃 구조
+
+```text id="owpbok"
+[Top Header]
+  - Logo
+  - Sign up
+
+[Centered Auth Card]
+  - Title: 로그인
+  - Description
+  - Email Input
+  - Password Input
+  - Error Summary
+  - Primary Button: 로그인
+  - Text Link: 비밀번호 찾기
+  - Secondary Link: 회원가입
+
+[Toast Layer]
+```
+
+### 헤더
+
+* 로고 → `/`
+* 회원가입 링크
+
+### 사이드바
+
+* 없음
+
+### 본문 영역
+
+* 중앙 정렬 로그인 카드
+* `returnTo`가 있는 경우 로그인 후 복귀 안내 문구 표시
+
+### 주요 카드/테이블/리스트
+
+* 로그인 카드 1개
+
+### 입력 폼
+
+* 이메일
+* 비밀번호
+
+### 버튼
+
+* 로그인
+* 비밀번호 찾기
+* 회원가입으로 이동
+
+### 모달/토스트
+
+* 로그인 실패 토스트
+* 세션 만료 안내 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 빈 상태: 해당 없음
+* 오류 상태: 인증 실패 / 네트워크 오류 / 서버 오류
+* 로딩 상태: 로그인 버튼 로딩, 폼 비활성화
+
+### 주요 인터랙션
+
+* Enter 제출
+* 로그인 성공 시 `returnTo` 우선, 없으면 `/app`
+* 로그인된 사용자가 진입 시 `/app` 또는 유효한 내부 경로로 이동
+
+---
+
+## W-02. 회원가입 `/signup` [P0]
+
+### 레이아웃 구조
+
+```text id="llz8s5"
+[Top Header]
+  - Logo
+  - Login
+
+[Centered Auth Card]
+  - Title: 회원가입
+  - Name Input
+  - Email Input
+  - Password Input
+  - Password Confirm Input
+  - Consent Area
+  - Primary Button: 회원가입
+  - Secondary Link: 로그인
+  - Notice: 가입 후 자동 로그인 없음
+```
+
+### 헤더
+
+* 로고
+* 로그인 링크
+
+### 사이드바
+
+* 없음
+
+### 본문 영역
+
+* 가입 폼 카드
+* 가입 완료 후 로그인 이동 안내
+
+### 주요 카드/테이블/리스트
+
+* 가입 카드 1개
+
+### 입력 폼
+
+* 이름
+* 이메일
+* 비밀번호
+* 비밀번호 확인
+* 약관/개인정보 동의
+
+### 버튼
+
+* 회원가입
+* 로그인으로 이동
+
+### 모달/토스트
+
+* 가입 완료 토스트
+* 이메일 중복 오류 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 오류 상태: 형식 오류 / 비밀번호 불일치 / 약관 미동의 / 이메일 중복
+* 로딩 상태: 제출 버튼 로딩
+
+### 주요 인터랙션
+
+* 성공 시 `/login` 이동
+* 자동 로그인은 하지 않음
+
+---
+
+## W-03. 비밀번호 찾기 `/forgot-password` [P0]
+
+### 레이아웃 구조
+
+```text id="9v4kp7"
+[Top Header]
+  - Logo
+  - Login
+
+[Centered Card]
+  - Title: 비밀번호 찾기
+  - Description: 가입한 이메일로 재설정 링크 발송
+  - Email Input
+  - Primary Button: 재설정 링크 보내기
+  - Secondary Link: 로그인으로 돌아가기
+
+[Result Message Area]
+```
+
+### 헤더
+
+* 로고
+* 로그인 링크
+
+### 사이드바
+
+* 없음
+
+### 본문 영역
+
+* 이메일 입력 카드
+* 발송 결과 메시지 영역
+
+### 주요 카드/테이블/리스트
+
+* 이메일 입력 카드 1개
+
+### 입력 폼
+
+* 이메일
+
+### 버튼
+
+* 재설정 링크 보내기
+* 로그인으로 돌아가기
+
+### 모달/토스트
+
+* 발송 완료 토스트
+* 발송 실패 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 오류 상태: 이메일 형식 오류 / 미등록 이메일 / 서버 오류
+* 로딩 상태: 버튼 로딩
+
+### 주요 인터랙션
+
+* 제출 성공 시 발송 완료 메시지 노출
+* 재시도 가능
+
+---
+
+## W-04. 비밀번호 재설정 `/reset-password?token=...` [P0]
+
+### 레이아웃 구조
+
+```text id="iitqur"
+[Top Header]
+  - Logo
+
+[Centered Card]
+  - Title: 새 비밀번호 설정
+  - Password Input
+  - Password Confirm Input
+  - Token Status Message
+  - Primary Button: 비밀번호 변경
+  - Secondary Link: 로그인으로 이동
+
+[Toast Layer]
+```
+
+### 헤더
+
+* 로고
+
+### 사이드바
+
+* 없음
+
+### 본문 영역
+
+* 재설정 카드
+* 토큰 유효성 메시지 영역
+
+### 주요 카드/테이블/리스트
+
+* 비밀번호 재설정 카드 1개
+
+### 입력 폼
+
+* 새 비밀번호
+* 새 비밀번호 확인
+
+### 버튼
+
+* 비밀번호 변경
+* 로그인으로 이동
+
+### 모달/토스트
+
+* 변경 완료 토스트
+* 만료 안내 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 오류 상태:
+
+  * 유효하지 않은 링크
+  * 만료된 링크
+  * 형식 오류
+* 로딩 상태: 토큰 검증 로딩 / 제출 로딩
+
+### 주요 인터랙션
+
+* 링크 진입 시 토큰 검증
+* 유효하면 비밀번호 입력 가능
+* 만료는 **5분 기준**
+* 만료 시 `/forgot-password` 재요청 CTA 제공
+
+---
+
+# 3. 앱 허브 / 영양제 화면 와이어프레임
+
+## W-05. 내 영양제 홈 `/app` [P0]
+
+### 레이아웃 구조
+
+```text id="6jg2d0"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Page Header]
+    - Title: 내 영양제 홈
+    - Subtext
+
+  [Quick Action Cards]
+    - 이미지 등록
+    - 직접 입력
+    - 분석 시작
+    - 문의 접수
+
+  [Summary Cards]
+    - 등록 영양제 수
+    - 최근 분석 결과
+    - 진행 중 작업 수
+
+  [Recent Activity]
+    - 최근 등록 영양제
+    - 최근 분석 기록
+
+  [Needs Attention]
+    - OCR 검수 필요
+    - 분석 실패 / 재시도 필요
+```
+
+### 헤더
+
+* 로고
+* 빠른 등록
+* 분석 시작
+* 문의
+* 사용자 메뉴
+
+### 사이드바
+
+* Home active
+* Supplements
+* Analyses
+* Support
+
+### 본문 영역
+
+* 허브형 카드 대시보드
+* 빠른 액션 / 상태 요약 / 최근 활동 / 처리 필요 항목 순서
+
+### 주요 카드/테이블/리스트
+
+* 빠른 실행 카드 4개
+* 요약 카드 3개
+* 최근 활동 리스트 2개
+* 처리 필요 상태 카드
+
+### 입력 폼
+
+* 없음
+
+### 버튼
+
+* 이미지 등록
+* 직접 입력
+* 분석 시작
+* 문의 접수
+* 각 카드의 상세 이동 버튼
+
+### 모달/토스트
+
+* 로그아웃 확인 모달
+* 작업 성공/실패 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 빈 상태: 등록 영양제 없음 → 등록 유도
+* 오류 상태: 카드/리스트 로딩 실패
+* 로딩 상태: 카드 스켈레톤 / 리스트 스켈레톤
+
+### 주요 인터랙션
+
+* 카드 클릭 시 각 기능 진입
+* 최근 활동 클릭 시 상세/결과 이동
+
+### 모바일 반응형 변화
+
+* 카드 1열
+* 빠른 실행 2x2 또는 1열 버튼 그룹
+* 사이드바 → 햄버거 드로어
+
+---
+
+## W-06. 내 영양제 목록 `/supplements` [P0]
+
+### 레이아웃 구조
+
+```text id="2jae5x"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Page Header]
+    - Title: 내 영양제 목록
+    - Search
+    - Sort
+    - CTA: 이미지 등록 / 직접 입력
+
+  [List Area]
+    - Desktop Table
+    - Mobile Card List
+
+  [Pagination / Load More]
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Supplements active
+
+### 본문 영역
+
+* 검색/정렬/CTA 툴바
+* 목록 테이블 또는 카드 리스트
+
+### 주요 카드/테이블/리스트
+
+* 데스크톱 컬럼:
+
+  * 제품명
+  * 제조사
+  * 등록 방식
+  * 최근 수정일
+  * 상태
+  * 액션
+* 모바일 카드:
+
+  * 제품명
+  * 제조사
+  * 상태 배지
+  * 주요 액션
+
+### 입력 폼
+
+* 검색창
+* 정렬 드롭다운
+
+### 버튼
+
+* 이미지 등록
+* 직접 입력
+* 상세 보기
+* 분석 시작
+
+### 모달/토스트
+
+* 삭제 결과 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 빈 상태: 영양제 없음
+* 오류 상태: 목록 조회 실패
+* 로딩 상태: 스켈레톤
+
+### 주요 인터랙션
+
+* 상세 이동
+* 분석 시작
+* 검색/정렬 반영
+* 삭제된 항목은 일반 목록에서 노출하지 않음
+
+---
+
+## W-07. 이미지 업로드 등록 `/supplements/new/image` [P0]
+
+### 레이아웃 구조
+
+```text id="1ifjlwm"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Page Header]
+    - Title: 이미지로 등록
+
+  [Guide Card]
+    - 업로드 가이드
+    - 지원 형식 안내
+
+  [Upload Block]
+    - Drag & Drop Zone
+    - File Picker
+    - Preview
+
+  [Action Bar]
+    - 취소
+    - OCR 시작
+    - 직접 입력 전환
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Supplements active
+
+### 본문 영역
+
+* 가이드 카드
+* 업로드 블록
+* 하단 액션 바
+
+### 주요 카드/테이블/리스트
+
+* 가이드 카드
+* 파일 미리보기 카드
+
+### 입력 폼
+
+* 파일 업로드
+
+### 버튼
+
+* 파일 선택
+* OCR 시작
+* 직접 입력으로 전환
+* 취소
+
+### 모달/토스트
+
+* 업로드 취소 확인 모달
+* 파일 형식 오류 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 빈 상태: 파일 미선택
+* 오류 상태: 파일 형식 오류 / 업로드 실패
+* 로딩 상태: 업로드 진행 상태 표시
+
+### 주요 인터랙션
+
+* 파일 선택 후 미리보기
+* OCR 시작 시 상태 화면 이동
+
+---
+
+## W-08. OCR 처리 상태 `/supplements/ocr-jobs/:jobId/status` [P0]
+
+### 레이아웃 구조
+
+```text id="7mgaw7"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Status Hero]
+    - Title: 텍스트 추출 중
+    - Status Badge
+    - Message
+
+  [Progress Block]
+    - Step Indicator
+    - Spinner / Progress
+
+  [Image Preview]
+
+  [Action Area]
+    - 새로고침
+    - 재시도
+    - 직접 입력 전환
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Supplements active
+
+### 본문 영역
+
+* 상태 요약
+* 진행 상태
+* 원본 이미지
+* 실패 대응 액션
+
+### 주요 카드/테이블/리스트
+
+* 상태 카드
+* 진행 카드
+* 이미지 카드
+
+### 입력 폼
+
+* 없음
+
+### 버튼
+
+* 새로고침
+* 재시도
+* 직접 입력
+* 문의 접수
+
+### 모달/토스트
+
+* 이탈 확인 모달
+* 실패 토스트
+* 완료 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 오류 상태: OCR 실패 / 타임아웃
+* 로딩 상태: 폴링 진행
+
+### 주요 인터랙션
+
+* 완료 시 검수 화면 이동
+* 실패 시 재시도 / 문의 접수
+
+---
+
+## W-09. OCR 검수 `/supplements/:id/review` [P0]
+
+### 레이아웃 구조
+
+```text id="7bgbl2"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Page Header]
+    - Title: OCR 검수
+
+  [2 Column Review Layout]
+    [Left]
+      - 원본 이미지
+    [Right]
+      - 검수 폼
+
+  [Sticky Action Bar]
+    - 취소
+    - 등록 확정
+    - 등록 후 분석 시작
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Supplements active
+
+### 본문 영역
+
+* 좌측 원본 이미지
+* 우측 추출 결과 수정 폼
+
+### 주요 카드/테이블/리스트
+
+* 이미지 카드
+* 폼 카드
+
+### 입력 폼
+
+* 제품명
+* 제조사
+* 복용 정보
+* 메모
+
+### 버튼
+
+* 등록 확정
+* 등록 후 분석 시작
+* 취소
+
+### 모달/토스트
+
+* 이탈 확인 모달
+* 등록 완료 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 오류 상태: OCR 결과 로드 실패
+* 로딩 상태: 이미지/폼 스켈레톤
+
+### 주요 인터랙션
+
+* 값 수정 후 저장
+* 저장 후 상세 이동 또는 분석 전 확인 이동
+
+---
+
+## W-10. 직접 입력 등록 `/supplements/new/manual` [P0]
+
+### 레이아웃 구조
+
+```text id="zi34qf"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Page Header]
+    - Title: 직접 입력 등록
+
+  [Form Sections]
+    - 기본 정보
+    - 복용 정보
+    - 메모
+
+  [Action Bar]
+    - 취소
+    - 저장
+    - 저장 후 분석 시작
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Supplements active
+
+### 본문 영역
+
+* 섹션형 입력 폼
+
+### 주요 카드/테이블/리스트
+
+* 기본 정보 카드
+* 복용 정보 카드
+* 메모 카드
+
+### 입력 폼
+
+* 제품명
+* 제조사
+* 복용 정보
+* 메모
+
+### 버튼
+
+* 저장
+* 저장 후 분석 시작
+* 취소
+
+### 모달/토스트
+
+* 이탈 확인 모달
+* 저장 완료 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 오류 상태: 필수값 누락 / 형식 오류
+* 로딩 상태: 제출 버튼 로딩
+
+### 주요 인터랙션
+
+* 저장 → 상세 이동
+* 저장 후 분석 시작 → 분석 전 확인 이동
+
+---
+
+## W-11. 영양제 상세 `/supplements/:id` [P0]
+
+### 레이아웃 구조
+
+```text id="8366ij"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Hero Summary]
+    - 제품명
+    - 상태 배지
+    - 제조사
+    - 주요 액션
+
+  [Info Sections]
+    - 기본 정보
+    - 복용 정보
+    - 메모
+
+  [Related Analysis]
+    - 최근 분석 요약
+    - 분석 기록 링크
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Supplements active
+
+### 본문 영역
+
+* 상단 요약
+* 상세 정보
+* 연관 분석 요약
+
+### 주요 카드/테이블/리스트
+
+* 요약 카드
+* 정보 카드
+* 관련 분석 카드
+
+### 입력 폼
+
+* 없음
+
+### 버튼
+
+* 수정
+* 분석 시작
+* 삭제
+* 목록으로
+
+### 모달/토스트
+
+* 삭제 확인 모달
+* 삭제 완료/실패 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 빈 상태: 관련 분석 없음
+* 오류 상태: 상세 조회 실패
+* 로딩 상태: 상세 스켈레톤
+
+### 주요 인터랙션
+
+* 수정 이동
+* 분석 시작
+* 삭제 클릭 시 확인 모달
+* 삭제 완료 시 일반 목록에서는 숨김 처리
+
+---
+
+## W-12. 삭제된 영양제 상세 `/supplements/:id` 읽기 전용 상태 [P0]
+
+### 레이아웃 구조
+
+```text id="ifjlwm1"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Hero Summary]
+    - 제품명
+    - 삭제됨 배지
+    - 삭제 일시(optional)
+
+  [Readonly Notice]
+    - 삭제된 영양제입니다
+    - 정보 확인만 가능합니다
+
+  [Info Sections]
+    - 기본 정보
+    - 복용 정보
+    - 메모
+
+  [Action Area]
+    - 복구
+    - 관련 분석 보기
+    - 목록으로
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Supplements active
+
+### 본문 영역
+
+* 삭제 상태 안내
+* 읽기 전용 정보 확인
+* 복구 액션
+
+### 주요 카드/테이블/리스트
+
+* 삭제 상태 카드
+* 읽기 전용 정보 카드
+* 관련 분석 카드
+
+### 입력 폼
+
+* 없음
+
+### 버튼
+
+* 복구
+* 관련 분석 보기
+* 목록으로
+
+### 모달/토스트
+
+* 복구 확인 모달
+* 복구 완료/실패 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 오류 상태: 조회 실패 / 복구 실패
+* 로딩 상태: 스켈레톤
+
+### 주요 인터랙션
+
+* 수정/재분석은 불가
+* 사용자 본인과 운영자 모두 복구 가능
+
+---
+
+## W-13. 영양제 수정 `/supplements/:id/edit` [P0]
+
+### 레이아웃 구조
+
+```text id="vrtjlw"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Page Header]
+    - Title: 영양제 수정
+
+  [Form Sections]
+    - 기본 정보
+    - 복용 정보
+    - 메모
+
+  [Sticky Action Bar]
+    - 취소
+    - 저장
+    - 삭제
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Supplements active
+
+### 본문 영역
+
+* 기존 값이 채워진 수정 폼
+
+### 주요 카드/테이블/리스트
+
+* 입력 섹션 카드
+
+### 입력 폼
+
+* 제품명
+* 제조사
+* 복용 정보
+* 메모
+
+### 버튼
+
+* 저장
+* 삭제
+* 취소
+
+### 모달/토스트
+
+* 저장하지 않고 나가기 모달
+* 삭제 확인 모달
+* 저장 완료 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 오류 상태: 수정 불가 / 저장 실패
+* 로딩 상태: 초기 데이터 로딩
+
+### 주요 인터랙션
+
+* 변경사항 저장
+* 삭제 가능
+* 분석 진행 중 저장 제한 정책은 후속 단계 API/상태 정책에서 반영
+
+---
+
+# 4. 분석 화면 와이어프레임
+
+## W-14. 분석 전 확인 `/analyses/new/preview` [P0]
+
+### 레이아웃 구조
+
+```text id="ywckef"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Page Header]
+    - Title: 분석 전 확인
+
+  [2 Column Layout]
+    [Left]
+      - 분석 대상 영양제 목록
+    [Right]
+      - 분석 요약
+      - 주의 안내
+      - 실행 CTA
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Analyses active
+
+### 본문 영역
+
+* 대상 확인
+* 실행 요약
+
+### 주요 카드/테이블/리스트
+
+* 영양제 선택/확인 리스트
+* 분석 요약 카드
+* 주의사항 카드
+
+### 입력 폼
+
+* 분석 대상 확인
+
+### 버튼
+
+* 분석 시작
+* 대상 변경
+* 취소
+
+### 모달/토스트
+
+* 실행 실패 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 빈 상태: 분석 가능한 영양제 없음
+* 오류 상태: 조회 실패
+* 로딩 상태: 스켈레톤
+
+### 주요 인터랙션
+
+* 시작 → 실행 상태 화면 이동
+* 삭제된 영양제는 대상에서 제외
+
+---
+
+## W-15. 분석 진행 상태 `/analyses/runs/:runId/status` [P0]
+
+### 레이아웃 구조
+
+```text id="19zzpl"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Status Hero]
+    - Title: 분석 진행 중
+    - Status Badge
+    - 재사용 결과 배지(optional)
+
+  [Progress Block]
+    - Spinner / Step
+    - 메시지
+
+  [Subject Summary]
+    - 분석 대상 요약
+
+  [Action Area]
+    - 결과 보기
+    - 재시도
+    - 문의 접수
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Analyses active
+
+### 본문 영역
+
+* 상태 중심 단일 컬럼
+
+### 주요 카드/테이블/리스트
+
+* 상태 카드
+* 대상 요약 카드
+
+### 입력 폼
+
+* 없음
+
+### 버튼
+
+* 새로고침
+* 결과 보기
+* 재시도
+* 문의 접수
+
+### 모달/토스트
+
+* 실패 토스트
+* 결과 준비 완료 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 오류 상태: 실패 / 재사용 실패 / 네트워크 오류
+* 로딩 상태: 폴링 / 스피너
+
+### 주요 인터랙션
+
+* 완료 시 결과 상세 이동
+* 실패 시 재시도 / 문의 접수
+
+---
+
+## W-16. 분석 기록 목록 `/analyses/history` [P0]
+
+### 레이아웃 구조
+
+```text id="jlwm1x"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Page Header]
+    - Title: 분석 기록
+    - Sort
+    - CTA: 새 분석 시작
+
+  [History List]
+    - Desktop Table
+    - Mobile Card List
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Analyses active
+
+### 본문 영역
+
+* 목록 툴바
+* 기록 리스트
+
+### 주요 카드/테이블/리스트
+
+* 데스크톱 컬럼:
+
+  * 분석일시
+  * 대상 수
+  * 상태
+  * 결과 요약
+  * 액션
+* 모바일 카드:
+
+  * 날짜
+  * 상태
+  * 요약
+  * 결과 보기
+
+### 입력 폼
+
+* 정렬 드롭다운
+
+### 버튼
+
+* 새 분석 시작
+* 결과 보기
+
+### 모달/토스트
+
+* 목록 조회 실패 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 빈 상태: 기록 없음
+* 오류 상태: 조회 실패
+* 로딩 상태: 스켈레톤
+
+### 주요 인터랙션
+
+* 결과 상세 이동
+
+---
+
+## W-17. 분석 결과 상세 `/analyses/:analysisId` [P0]
+
+### 레이아웃 구조
+
+```text id="cystut"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Result Hero]
+    - 분석 시각
+    - 상태 배지
+    - 재사용 배지(optional)
+    - 주요 액션
+
+  [Top Summary]
+    - 핵심 결과 요약
+    - 최종 추천 요약
+
+  [Detail Sections]
+    - 분석 대상 목록
+    - 세부 분석 내용
+    - 주의사항 / 권장 행동
+
+  [Support CTA]
+    - 문의 접수
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Analyses active
+
+### 본문 영역
+
+* 결과 요약
+* 세부 분석
+* 후속 액션
+
+### 주요 카드/테이블/리스트
+
+* 결과 요약 카드
+* 최종 추천 카드
+* 대상 리스트
+* 주의사항 카드
+
+### 입력 폼
+
+* 없음
+
+### 버튼
+
+* 문의 접수
+* 분석 기록으로
+* 관련 영양제 보기
+
+### 모달/토스트
+
+* 문의 이동 안내 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 오류 상태: 결과 조회 실패
+* 로딩 상태: 섹션 스켈레톤
+
+### 주요 인터랙션
+
+* 관련 영양제 보기
+* 문의 접수
+* 분석 기록으로 이동
+
+### 삭제된 영양제 표시 정책
+
+* 분석 대상에 삭제된 영양제가 포함되어 있으면
+
+  * **이름 유지**
+  * **`삭제됨` 배지 표시**
+  * 클릭 시 읽기 전용 상세로 이동
+
+---
+
+# 5. 문의 화면 와이어프레임
+
+## W-18. 문의 내역 목록 `/support/inquiries` [P0]
+
+### 레이아웃 구조
+
+```text id="nqepya"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Page Header]
+    - Title: 문의 내역
+    - CTA: 문의 접수
+
+  [Inquiry List]
+    - Desktop Table
+    - Mobile Card List
+
+  [Info Note]
+    - 문의 상세 화면은 현재 없음
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Support active
+
+### 본문 영역
+
+* 문의 목록
+* 하단 안내 문구
+
+### 주요 카드/테이블/리스트
+
+* 데스크톱 컬럼:
+
+  * 접수일
+  * 문의 유형
+  * 관련 항목
+  * 상태
+  * 마지막 업데이트
+* 모바일 카드:
+
+  * 유형
+  * 상태 배지
+  * 접수일
+  * 관련 항목
+
+### 입력 폼
+
+* 없음
+* 상태 필터는 **P1로 제외**
+
+### 버튼
+
+* 문의 접수
+
+### 모달/토스트
+
+* 조회 실패 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 빈 상태: 문의 없음
+* 오류 상태: 목록 조회 실패
+* 로딩 상태: 리스트 스켈레톤
+
+### 주요 인터랙션
+
+* 상세 진입 없음
+* 문의 접수 CTA 중심
+
+---
+
+## W-19. 문의 접수 `/support/inquiries/new` [P0]
+
+### 레이아웃 구조
+
+```text id="xzq8aj"
+[Top Header]
+[Left Sidebar]
+[Main]
+  [Breadcrumb Slot]
+  [Page Header]
+    - Title: 문의 / 오류 신고
+
+  [Form Card]
+    - 문의 유형
+    - 관련 분석 선택(optional)
+    - 관련 영양제 선택(optional)
+    - 제목
+    - 상세 내용
+    - 안내 문구
+
+  [Action Bar]
+    - 취소
+    - 제출
+```
+
+### 헤더
+
+* 공통 로그인 헤더
+
+### 사이드바
+
+* Support active
+
+### 본문 영역
+
+* 단일 문의 폼 카드
+
+### 주요 카드/테이블/리스트
+
+* 폼 카드 1개
+
+### 입력 폼
+
+* 문의 유형
+* 관련 분석 선택(optional)
+* 관련 영양제 선택(optional)
+* 제목
+* 상세 내용
+
+### 버튼
+
+* 제출
+* 취소
+
+### 모달/토스트
+
+* 제출 완료 토스트
+* 제출 실패 토스트
+
+### 빈 상태 / 오류 상태 / 로딩 상태
+
+* 오류 상태: 필수값 누락 / 제출 실패
+* 로딩 상태: 제출 버튼 로딩
+
+### 주요 인터랙션
+
+* 관련 분석/영양제 prefill 가능
+* 제출 후 목록 이동
+
+### 확정 조건
+
+* **파일 첨부 없음**
+
+---
+
+# 6. 화면 간 핵심 이동 구조
+
+```text id="j0kopu"
+/login -> returnTo or /app
+/signup -> /login
+/forgot-password -> email sent state
+/reset-password?token=... -> /login (success)
+
+/app -> /supplements
+/app -> /supplements/new/image
+/app -> /supplements/new/manual
+/app -> /analyses/new/preview
+/app -> /support/inquiries
+
+/supplements -> /supplements/:id
+/supplements/new/image -> /supplements/ocr-jobs/:jobId/status
+/supplements/ocr-jobs/:jobId/status -> /supplements/:id/review
+/supplements/:id/review -> /supplements/:id
+/supplements/:id/review -> /analyses/new/preview
+/supplements/:id -> /supplements/:id/edit
+/supplements/:id -> /analyses/new/preview
+/supplements/:id -> delete confirm
+/supplements/:id(edit) -> save or delete
+/deleted supplement detail -> restore
+
+/analyses/new/preview -> /analyses/runs/:runId/status
+/analyses/runs/:runId/status -> /analyses/:analysisId
+/analyses/runs/:runId/status -> /support/inquiries/new
+/analyses/history -> /analyses/:analysisId
+/analyses/:analysisId -> /support/inquiries/new
+/analyses/:analysisId -> /supplements/:id(readonly if deleted)
+
+/support/inquiries -> /support/inquiries/new
+/support/inquiries/new -> /support/inquiries
+```
+
+---
+
+# 7. 5단계 설계 메모
+
+## 7-1. `/app` 카드형 대시보드 의미
+
+`/app`은 단순 목록 페이지가 아니라, 로그인 직후 사용자가 현재 상태를 빠르게 파악하고 다음 행동을 바로 선택할 수 있게 하는 **허브형 홈 화면**이다. 따라서 카드 구조로 설계하여 `빠른 실행`, `상태 요약`, `최근 활동`, `처리 필요 항목`을 분리한다.
+
+## 7-2. 삭제 정책 반영 방식
+
+* 삭제 버튼은 P0로 포함한다.
+* 삭제는 soft delete 기준으로 설계한다.
+* 삭제된 영양제는 일반 목록에서 숨긴다.
+* 분석 결과에서는 이름 유지 + `삭제됨` 배지로 문맥을 보존한다.
+* 삭제된 영양제 상세는 읽기 전용이며, 사용자와 운영자 모두 복구 가능하다.
+
+## 7-3. 비밀번호 재설정 정책 반영 방식
+
+* 비밀번호 찾기는 이메일 링크 방식이다.
+* 링크는 5분만 유효하다.
+* 만료 시 재요청 화면으로 유도한다.
+
+---
+
+# 이번 단계 확정 사항
+
+1. 5단계 텍스트 와이어프레임 화면 범위를 최종 확정했다.
+2. `/app`은 카드형 대시보드 구조로 확정했다.
+3. 직접 입력/수정/OCR 검수의 주요 필드를 `제품명 / 제조사 / 복용 정보 / 메모`로 확정했다.
+4. 비밀번호 찾기와 비밀번호 재설정 화면을 P0에 포함했다.
+5. 비밀번호 재설정은 이메일 링크 방식, 링크 유효시간은 5분으로 확정했다.
+6. 영양제 삭제 기능을 P0에 포함했고 soft delete 기준으로 확정했다.
+7. 삭제된 영양제 상세는 읽기 전용으로 확정했다.
+8. 삭제 복구 권한은 사용자와 운영자 모두 가능하도록 확정했다.
+9. 문의 접수는 첨부파일 없이 텍스트 기반으로 확정했다.
+10. 문의 목록 상태 필터는 P1로 미뤘다.
+
+# 다음 단계 입력으로 넘길 핵심 요약
+
+1. 6단계 ERD 후보 엔티티
+
+   * user
+   * supplement
+   * supplement_ocr_job
+   * analysis
+   * analysis_run
+   * inquiry
+   * password_reset_token 또는 동등한 인증 토큰 엔티티
+2. supplement는 `deleted_at` 기반 soft delete가 필요하다.
+3. 삭제된 supplement는 일반 목록 제외, 읽기 전용 상세, 복구 가능 정책이 필요하다.
+4. analysis 결과에는 삭제된 supplement 표시를 위한 이름/상태 보존 전략이 필요하다.
+5. 비밀번호 재설정은 이메일 링크 방식이며 토큰 만료시간은 5분이다.
+6. inquiry는 첨부파일 없이 텍스트 기반 접수만 지원한다.
+7. inquiry 목록의 상태 필터는 P1로 제외 가능하다.
+8. P0 API 범위에는 아래가 포함되어야 한다.
+
+   * 로그인 / 회원가입
+   * 비밀번호 찾기 / 재설정
+   * 영양제 목록 / 상세 / 생성 / 수정 / 삭제 / 복구
+   * OCR 등록 / OCR 상태 / OCR 검수 저장
+   * 분석 전 확인 / 실행 / 실행 상태 / 결과 / 기록
+   * 문의 목록 / 문의 접수
+
+# 추가 확인 필요 항목
+
+없음
+
+# 충돌 가능 항목
+
+1. 6단계에서 분석 결과 보존 방식이 snapshot 중심으로 확정되면 분석 상세 화면의 표시 필드가 일부 조정될 수 있다.
+2. 6단계에서 복용 정보 세부 구조가 더 세분화되면 입력 폼 섹션이 확장될 수 있다.
+3. 7단계에서 인증 구현 방식 세부가 바뀌면 비밀번호 재설정 UI 문구가 일부 조정될 수 있다.
+
+# 바로 다음 단계 진행 가능 항목
+
+* 6단계 ERD 초안 작성
+* 6단계 API 명세 초안 작성
+* 인증/삭제/복구/상태 enum 정책 구체화
+* 기술 반영형 보안 정책 작성
+
+# 추가 확인 필요 항목
+
+없음

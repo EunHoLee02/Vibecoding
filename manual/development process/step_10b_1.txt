@@ -1,0 +1,306 @@
+좋습니다.
+그럼 10b에 바로 들어갈 수 있게 **충돌 6건을 한 번에 닫는 최종 결정안**으로 정리하겠습니다.
+
+아래는 비교표가 아니라 바로 적용 가능한 **추천안 1개**입니다.
+근거는 최신 확정본 우선 원칙에 따라 7단계, 8단계, 9단계, 10a를 우선하고, 2단계/6단계의 충돌 항목은 정정 대상으로 처리한 것입니다.   
+
+---
+
+# 10b 착수용 충돌 해소 최종 결정안
+
+## 충돌 항목
+
+### 1. 영양제 데이터 모델 충돌
+
+* 2단계는 분석용 구조(`ingredient_list`, `serving_basis_type`, `daily_serving_count`)를 요구함. 
+* 6단계 일부 API/ERD는 `name`, `manufacturer`, `dosage_info`, `memo` 중심으로 단순화돼 있음. 
+
+### 2. OCR 업로드 계약 충돌
+
+* 2단계는 `POST /supplements/images` + 초안 supplement 생성 흐름임. 
+* 7단계는 **R2 presigned URL direct upload**를 최종 권장안으로 확정함. 
+
+### 3. 인증 규칙 충돌
+
+* 2단계 비밀번호 정책: 8~16자 + 대/소문자/숫자/특수문자. `user_status`: `ACTIVE | SUSPENDED | DELETED`. 
+* 10a 비밀번호 정책: 8~128자 + 영문/숫자/특수문자. 계정 상태: `active | disabled | pending_delete`. 
+
+### 4. 공통 에러 코드 충돌
+
+* 7단계는 10개 코드 확정. 
+* 10a 일부 설명은 6개 코드만 남아 있음. 확정본 기준과 어긋남.
+
+### 5. 비밀번호 재설정 구현 소속 불명확
+
+* 5/6/8단계는 P0 범위에 포함.   
+* 10a 최종 API 범위 요약에는 빠져 있음. 
+
+### 6. 운영자 문의 관리 P0/P1 충돌
+
+* 2단계는 운영 기능이 내부 운영 절차/내부 API 중심이고 관리자 UI 없음이라고 둠. 
+* 6단계는 운영자 문의 목록/상태변경/메모와 `admin_action_logs`를 실질적으로 넣음. 
+* 8단계 구현 우선순위에는 관리자 문의 관리 화면이 P0로 올라와 있음. 
+
+---
+
+# 최종 결정안
+
+## 1. 영양제 canonical 모델 확정
+
+**추천안: 2단계 분석용 구조를 canonical로 채택**
+
+즉, P0의 영양제는 단순 메모형 엔터티가 아니라 아래 필드를 반드시 가진 분석용 엔터티로 확정합니다.
+
+### supplement 기본 필드
+
+* `id`
+* `user_id`
+* `source_type`
+* `product_name`
+* `manufacturer` nullable
+* `serving_basis_type` (`PER_SERVING | PER_DAY`)
+* `daily_serving_count` nullable
+* `memo` nullable
+* `status`
+* `created_at`
+* `updated_at`
+* `deleted_at`
+
+### supplement_ingredients 별도 테이블 필수
+
+* `id`
+* `supplement_id`
+* `ingredient_name_raw`
+* `ingredient_name_standard` nullable
+* `ingredient_code` nullable
+* `amount_value`
+* `amount_unit`
+* `is_primary_display_value`
+* `match_status`
+* `created_at`
+* `updated_at`
+
+### 처리 원칙
+
+* 6단계의 `dosage_info`는 **자유 텍스트 보조 필드**로만 유지하거나 P0에서는 제거
+* 분석 엔진은 반드시 `supplement_ingredients` 기준으로 동작
+* `manufacturer`, `memo`는 유지
+* **분석 전 확인 / 분석 실행 / 결과 재사용 fingerprint는 이 canonical 구조 기준으로 계산**
+
+이 안이 맞는 이유는 2단계 P0 기능이 실제 분석 흐름까지 연결돼 있기 때문입니다. 단순 `name + dosage_info`만으로는 F-014, F-020, F-021~F-025를 구현할 수 없습니다. 
+
+---
+
+## 2. OCR 업로드 계약 확정
+
+**추천안: 7단계 기준으로 presigned upload 방식으로 최종 확정**
+
+즉, 2단계의 `POST /supplements/images` 직접 업로드안은 폐기하고 아래로 통일합니다.
+
+### 최종 플로우
+
+1. `POST /api/v1/ocr/upload-url`
+
+   * presigned URL 발급
+   * `ocr_job_id` 생성
+2. 클라이언트가 R2에 직접 업로드
+3. `POST /api/v1/ocr/jobs/{ocrJobId}/complete`
+
+   * 업로드 완료 통지
+   * worker enqueue
+4. `GET /api/v1/ocr/jobs/{ocrJobId}`
+
+   * 상태 조회
+5. `POST /api/v1/ocr/jobs/{ocrJobId}/confirm`
+
+   * OCR 결과 검수 후 supplement + supplement_ingredients 저장
+
+### 함께 정리할 규칙
+
+* supplement 초안은 **업로드 시점이 아니라 검수 확정 시점**에 생성
+* OCR 중간 상태는 `supplement_ocr_jobs`가 담당
+* 원본 파일은 검수 완료 시 즉시 삭제, 실패 건은 재시도 종료 또는 직접 입력 전환 후 삭제  
+
+이 안이 맞는 이유는 7~9단계 기준 스택과 운영 구조가 모두 presigned direct upload를 전제로 하고 있기 때문입니다. 10b는 구현 단계이므로 최신 확정본인 7단계 기준을 따라야 합니다. 
+
+---
+
+## 3. 인증 authoritative 규칙 확정
+
+**추천안: 10a 최신 확정본을 authoritative source로 채택**
+
+### 비밀번호 정책
+
+* 최소 8자
+* 최대 128자
+* 영문 1자 이상
+* 숫자 1자 이상
+* 특수문자 1자 이상 
+
+### 계정 상태 enum
+
+* `active`
+* `disabled`
+* `pending_delete`
+
+### 로그인 허용 조건
+
+* `active`만 허용
+* `disabled`, `pending_delete`, `deleted_at != null` 로그인 차단 
+
+### 세션 방식
+
+* 서버 세션 + Redis + `user_sessions`
+* raw token은 HttpOnly cookie에만 존재
+* DB에는 hash만 저장
+* refresh는 token rotation 방식 
+
+### 정정 대상
+
+* 2단계/6단계의 구 enum(`ACTIVE`, `SUSPENDED`, `DELETED`, `DELETED_PENDING`)은 10b 구현 기준에서 폐기
+* casing도 전부 소문자 snake_case 또는 10a/8단계 API 응답 기준에 맞춰 통일
+
+---
+
+## 4. 공통 에러 코드 authoritative 소스 확정
+
+**추천안: 7단계의 10개 코드를 최종 고정**
+
+### 최종 코드
+
+* `INVALID_INPUT`
+* `UNAUTHORIZED`
+* `FORBIDDEN`
+* `NOT_FOUND`
+* `CONFLICT`
+* `TOO_MANY_REQUESTS`
+* `INTERNAL_ERROR`
+* `BAD_GATEWAY`
+* `SERVICE_UNAVAILABLE`
+* `GATEWAY_TIMEOUT`  
+
+### 적용 규칙
+
+* 10a `app/core/exceptions.py`도 이 10개를 모두 포함하도록 수정
+* 10b 모든 API는 이 10개 코드만 사용
+* 파일 업로드/OCR/메일/queue/redis 장애는 7단계 사용 기준 그대로 매핑
+
+---
+
+## 5. password reset 구현 소속 확정
+
+**추천안: 10a 미완 항목으로 간주하고, 10b 범위에서는 제외**
+
+이유:
+
+* password reset은 인증/세션 도메인에 속함
+* 6단계 API는 auth 하위로 정의되어 있음 (`/api/v1/auth/password-reset/*`) 
+* 10a는 인증/권한 단계이므로 소속상 10a가 맞음
+* 10b는 “백엔드 P0 기능 전체” 범위이긴 하지만, 사용자 지침상 충돌 해소 전 임의 확정 금지이므로 **지금 이 턴에서 소속을 10a로 정정**하는 것이 더 안전함
+
+### 따라서 최종 정리
+
+* `A-005`, `A-006`, `A-007`은 **10a 보강분**
+* 10b 구현 시작 범위에서는 제외
+* 10a 보강 완료 후 10b 착수
+
+---
+
+## 6. 운영자 문의 관리 P0 여부 확정
+
+**추천안: “운영자 API는 P0 포함, 운영자 웹 UI는 P1”로 분리 확정**
+
+이게 가장 충돌을 적게 만듭니다.
+
+### P0 포함
+
+* 사용자 문의 목록 조회
+* 사용자 문의 등록
+* 운영자용 내부 API
+
+  * 문의 목록 조회
+  * 문의 상태 변경
+  * 내부 메모 저장
+  * `admin_action_logs` 기록
+
+### P0 제외
+
+* 관리자 웹 콘솔 화면
+* 관리자 대시보드 UI
+* 관리자 사용자 차단/복구 화면
+
+이 안은 2단계의 “정식 관리자 UI 없음” 원칙과, 6단계의 운영자 문의 처리 API/로그 설계를 동시에 살립니다. 또 8단계의 관리자 기능 확장 계획과도 덜 충돌합니다.   
+
+---
+
+# 10b 착수 기준으로 재정리한 authoritative 문서 우선순위
+
+1. **10a**: 인증/권한
+2. **9단계**: DB 연결/트랜잭션/환경변수
+3. **8단계**: 프로젝트 구조/구현 순서
+4. **7단계**: 공통 에러 코드, 업로드 방식, 기준 스택
+5. **2단계**: 기능 요구의 canonical source
+6. **6단계**: 위 문서와 충돌하지 않는 범위만 반영
+
+---
+
+# 이제 10b에서 구현 가능한 범위
+
+위 결정안을 적용하면 10b는 아래 순서로 바로 들어갈 수 있습니다.
+
+### 1순위
+
+* 공통 응답/에러 유틸 10코드 반영
+* supplement canonical schema/model 정리
+* supplement_ingredients 모델 추가
+* inquiry / admin inquiry API 범위 분리
+
+### 2순위
+
+* manual supplement CRUD
+* analysis preview
+* analysis create / status / result
+* inquiry user API
+
+### 3순위
+
+* OCR presigned upload API
+* OCR job status
+* OCR confirm
+
+---
+
+# 이번 단계 확정 사항
+
+* 충돌 6건에 대한 최종 추천안을 확정했습니다.
+* 10b 착수 기준 authoritative source를 정리했습니다.
+* 특히 아래 3개를 핵심 확정으로 둡니다.
+
+  1. 영양제 canonical 모델은 **2단계 분석용 구조**
+  2. OCR 업로드는 **7단계 presigned upload 방식**
+  3. 공통 에러 코드는 **7단계 10개 전부 사용**
+
+# 다음 단계 입력으로 넘길 핵심 요약
+
+* 10a 보강: password reset API 포함
+* 10b 구현 기준:
+
+  * supplement + supplement_ingredients 구조 사용
+  * presigned OCR 업로드 사용
+  * 공통 에러 10개 사용
+  * admin inquiry는 API만 P0, UI는 P1
+* 이 기준으로 10b를 API 단위로 순서대로 작성 가능
+
+# 추가 확인 필요 항목
+
+* 없음으로 가도 될 정도로 정리는 됐습니다.
+* 다만 엄밀히 말하면 `dosage_info`를 P0에 남길지 보조 필드로만 둘지는 마지막 한 줄 정리가 필요합니다.
+  제 추천은 **보조 필드 유지**입니다.
+
+# 충돌 가능 항목
+
+* 2단계 문서 원문 자체는 수정되지 않았으므로, 이후 참조 시 “2단계 기능 요구는 유지하되 업로드 계약은 7단계로 대체”라고 명시해야 합니다.
+* 6단계의 단순 supplement API 예시는 10b 구현 시 전면 재정렬이 필요합니다.
+* 10a 파일 구조 예시도 공통 에러 10코드 기준으로 수정이 필요합니다.
+
+원하시면 다음 턴에서 바로 이 결정안을 반영해서 **10b 구현 1순위 API부터** 순서대로 들어가겠습니다.

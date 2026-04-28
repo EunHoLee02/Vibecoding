@@ -1,0 +1,74 @@
+[실행용 축약 템플릿 - 9단계 DB 연결 설계]
+
+이번에는 [9단계]만 수행해줘.
+아직 다음 단계는 수행하지 말아줘.
+
+[Canonical Decision Register]
+(최신 frozen_values만 남기고 붙여넣기)
+
+[이전 단계 authoritative_updates]
+(직전 단계 YAML 그대로 붙여넣기)
+
+[이전 단계 확정본 요약]
+- 이번 단계 확정 사항:
+- 다음 단계 입력으로 넘길 핵심 요약:
+
+[이번 단계 입력 체크리스트]
+- 8단계 프로젝트 구조
+- 7단계 스택
+- Canonical Decision Register
+
+[이번 단계 추가 입력]
+- 새로 확정할 값:
+- 변경할 값:
+- deprecated 처리할 값:
+- 유지할 frozen_values:
+- 추가 제약/예외:
+- 운영/보안/권한 관련 메모:
+
+[이번 단계 프롬프트]
+9단계 요구사항만 수행해줘.
+
+[출력에 반드시 포함할 섹션]
+- 주 DB/보조 저장소/파일 저장소 역할
+- ORM/migration
+- 연결 구조
+- 커넥션 풀 기본값
+- 트랜잭션 기준
+- soft delete 적용 대상
+- enum 저장 방식
+- 중복 방지 기준
+- env 예시
+- migration 전략
+- seed 전략
+- CI 테스트 DB 전략
+
+- 이번 단계 확정 사항
+- 다음 단계 입력으로 넘길 핵심 요약
+- 추가 확인 필요 항목
+- 충돌 가능 항목
+- 바로 다음 단계 진행 가능 항목
+- 단계 상태
+- authoritative_updates YAML
+
+[authoritative_updates YAML 템플릿]
+authoritative_updates:
+  frozen_values:
+    key: value
+  supersedes:
+    - old_source -> new_source
+  deprecated:
+    - deprecated_key_or_rule
+  carry_forward_only:
+    - key1
+    - key2
+  do_not_carry_forward:
+    - key3
+    - key4
+
+stage_status:
+  maturity: draft|provisional|minimum_complete|fully_verified
+  unresolved_conflicts:
+    - none
+  missing_p0_items:
+    - none

@@ -1,0 +1,409 @@
+아래를 **7단계 기술 스택 및 아키텍처 확정본**으로 쓰시면 됩니다.
+
+## 7단계 기술 스택 및 아키텍처 확정
+
+### 충돌 항목
+
+1. 6단계에서 세션 저장소는 `Redis 우선 가정` 상태였고, 이번 7단계에서 **Redis로 최종 확정**한다. 
+2. 6단계에서 `429 / 502 / 503 / 504`는 확장 후보였고, 이번 7단계에서 **프로젝트 공통 에러 코드로 확정**한다. 
+
+### 진행 전 체크
+
+1~6단계 확정본 기준으로, 이번 7단계에서 닫아야 할 핵심 미정 항목은 **세션 저장소 구현 방식, 공통 에러 코드 최종표, 결과 API DTO 스키마, Rate Limit 최종 수치**다. 6단계 수정본은 이미 **서버 세션 기반 인증**, `user_sessions`, `admin_action_logs`, OCR 원본 즉시 삭제, `result_version` 버전 관리, `request_id` 기반 공통 실패 응답을 확정했으므로 7단계 진행이 가능하다. 
+
+이번 단계에서 함께 확정하는 값:
+
+* 세션 저장소: **Redis**
+* 결과 API DTO: **v1로 고정**
+* Rate Limit 수치: **이번 단계에서 확정**
+* 악성 파일 검사: **P0 제외, P1/운영 보강**
+* 관리자 사용자 차단/복구 화면: **P1**
+
+---
+
+## 1. 추천 스택
+
+### 최종 추천 조합 1안
+
+**Next.js(App Router) + FastAPI + PostgreSQL + Redis + Cloudflare R2 + Vercel/Render**
+
+### 프론트엔드 스택
+
+* **Next.js App Router + TypeScript**
+* **Tailwind CSS + shadcn/ui**
+* **TanStack Query**
+* **React Hook Form + Zod**
+* **Zustand(UI 상태 한정)**
+
+선정 이유:
+
+* 5단계에서 확정된 `/app` 카드형 대시보드, OCR/분석 상태 화면, 사용자/운영자 화면 분리 구조에 잘 맞는다. 
+* Next.js App Router는 최신 기준의 기본 라우팅 구조이며 Server Components를 지원한다. ([Next.js][1])
+
+### 백엔드 스택
+
+* **FastAPI**
+* **Pydantic v2**
+* **SQLAlchemy 2.0**
+* **Alembic**
+* **Celery + Redis** 또는 동급 Python worker 구조
+
+선정 이유:
+
+* 6단계에서 OCR, 분석, 삭제 배치, 상태 조회 API가 분리된 비동기 흐름이 이미 전제되어 있다. 
+* FastAPI는 타입 기반 API 개발과 OpenAPI 기반 문서화를 기본 지원하므로 현재처럼 API 명세가 상세한 구조에 적합하다. ([FastAPI][2])
+
+### DB 선택
+
+* **PostgreSQL**
+* 결과 저장 컬럼은 **JSONB**
+* 관계형 엔터티와 버전 필드는 그대로 유지
+
+  * `users`
+  * `user_sessions`
+  * `password_reset_tokens`
+  * `supplements`
+  * `supplement_ocr_jobs`
+  * `analysis_runs`
+  * `analysis_targets`
+  * `analyses`
+  * `inquiries`
+  * `admin_action_logs`
+
+선정 이유:
+
+* 6단계에서 `result_version` 기준 JSON 버전 관리, 스냅샷 구조, 운영 로그, 세션 메타 추적이 확정되어 있다. 이 요구는 PostgreSQL + JSONB가 가장 안정적으로 받쳐준다. 
+
+### 인증 방식 확정
+
+* **서버 세션 기반**
+* 세션 식별자 저장: **HttpOnly + Secure + SameSite=Lax 쿠키**
+* 세션 저장소: **Redis**
+* 세션 메타/감사/강제 무효화 추적: **`user_sessions` 테이블**
+* 저장소 장애 시: **fallback 없이 503 차단**
+* 로그아웃/탈퇴/즉시 삭제/사용자 차단 시 해당 사용자의 모든 세션 revoke
+
+이 결정은 6단계의 인증 정책과 그대로 일치한다.
+
+### 파일 업로드 / 스토리지 방식
+
+* **Cloudflare R2**
+* 업로드 방식: **presigned URL 기반 direct upload**
+* 용도: **OCR 임시 원본 파일 저장**
+* 삭제 정책:
+
+  * 검수 완료 즉시 삭제
+  * 실패 건은 재시도 완료 또는 직접 입력 전환 후 삭제
+* DB 저장 대상:
+
+  * 파일 메타데이터
+  * OCR 결과 데이터
+  * 원본 파일 본문은 미보관
+
+6단계에서 OCR 원본은 장기 보관하지 않고, 결과/메타데이터만 유지하도록 확정되어 있다.
+R2는 S3 호환 API와 presigned URL 방식을 지원한다. ([Cloudflare Docs][3])
+
+### 상태관리 방식
+
+* **서버 상태:** TanStack Query
+* **폼 상태:** React Hook Form
+* **검증:** Zod
+* **UI 전역 상태:** Zustand만 사용
+* **인증 기준 상태:** `/api/v1/auth/me`
+
+선정 이유:
+
+* 이 서비스는 영양제 목록, OCR 상태 polling, 분석 상태 polling, 문의 목록 등 **서버 상태 비중**이 높다.
+* 따라서 전역 스토어 하나로 몰지 않고, 서버 상태와 UI 상태를 분리하는 구성이 적합하다.
+* 6단계의 상태 API 분리 원칙과도 맞다. 
+
+### ORM 또는 DB 접근 방식
+
+* **SQLAlchemy 2.0 ORM**
+* **Alembic**
+* 트랜잭션 경계는 service layer에서 명시 관리
+
+선정 이유:
+
+* `analysis_runs → analyses`, `users → user_sessions`, `users → admin_action_logs` 같이 관계가 명확한 구조에 적합하다. 
+
+### 배포 플랫폼 제안
+
+* **프론트엔드:** Vercel
+* **백엔드 API:** Render Web Service
+* **비동기 작업:** Render Background Worker
+* **정기 배치:** Render Cron Job
+* **스토리지:** Cloudflare R2
+* **DB/Redis:** Managed 서비스 사용
+
+선정 이유:
+
+* 프론트와 백엔드, 워커, 배치를 분리하기 쉽다.
+* Vercel은 Local / Preview / Production 환경 개념을 제공한다. ([Vercel][4])
+
+### dev / staging / prod 분리 방식
+
+* **dev**
+
+  * 로컬 Docker Compose
+  * 로컬 Postgres / Redis
+  * dev bucket 또는 로컬 S3 호환 스토리지
+* **staging**
+
+  * 프론트: 별도 staging 프로젝트
+  * 백엔드: 별도 staging 서비스
+  * DB / Redis / bucket 완전 분리
+  * 실사용자 데이터 사용 금지
+* **prod**
+
+  * 프론트: Vercel Production
+  * 백엔드: Render production
+  * DB / Redis / bucket 완전 분리
+* **preview**
+
+  * 프론트는 PR 단위 preview 활용
+  * 고정 QA는 staging에서 수행
+
+### 비동기 아키텍처 확정
+
+* 브라우저 → Next.js
+* Next.js → FastAPI
+* FastAPI → PostgreSQL / Redis / R2
+* FastAPI → Redis queue
+* Worker → OCR/분석 수행 → 결과 저장 → 원본 삭제
+* Cron Job
+
+  * `DELETED_PENDING` 30일 경과 계정 hard delete
+  * 만료 세션 정리
+  * 만료된 reset token 정리
+  * 임시 OCR 파일 청소
+
+이 구조는 6단계의 탈퇴 정책, OCR 삭제 정책, 분석 재사용 정책과 직접 연결된다.
+
+### Rate Limit 최종 확정
+
+* 로그인: **이메일 기준 5회/10분, IP 기준 20회/10분**
+* 비밀번호 재설정 요청: **이메일 기준 3회/30분, IP 기준 10회/30분**
+* OCR 업로드: **사용자 기준 10회/10분**
+* 분석 실행: **사용자 기준 5회/10분**
+* 문의 등록: **사용자 기준 5회/30분**
+
+이 값은 6단계의 가정안을 7단계 최종안으로 확정한 것이다. 
+
+### 결과 API DTO v1 확정
+
+6단계에서 7단계에서 고정하기로 한 응답 블록을 아래처럼 확정한다. 고정 블록은 `summary`, `final_recommendation`, `warnings`, `targets`, `metadata`다. 
+
+```json
+{
+  "success": true,
+  "data": {
+    "analysis_id": "uuid",
+    "summary": {},
+    "final_recommendation": {},
+    "warnings": [],
+    "targets": [],
+    "metadata": {
+      "rule_version": "string",
+      "data_version": "string",
+      "result_version": "v1",
+      "reused": false,
+      "created_at": "ISO-8601"
+    }
+  },
+  "meta": {}
+}
+```
+
+### 이번 단계에서 함께 닫는 운영 판단
+
+* 악성 파일 검사(antivirus): **P0 미도입**
+
+  * 현재는 이미지 계열만 허용, 크기 제한, MIME/확장자/magic number 검증, 원본 즉시 삭제 정책이 이미 있음
+  * **P1 또는 11단계 운영 보강**으로 넘김
+* 관리자 사용자 차단/복구 UI: **P1**
+
+  * P0 범위는 문의 관리 + 즉시 hard delete까지로 제한
+
+---
+
+## 2. 대안 스택
+
+### 대안 2안
+
+**Next.js(App Router) + NestJS + PostgreSQL + Redis + AWS S3 + Vercel/Render**
+
+구성:
+
+* 프론트: Next.js + TypeScript
+* 백엔드: NestJS
+* DB 접근: Prisma ORM
+* 세션/큐: Redis
+* 스토리지: AWS S3
+* 배포: Vercel + Render
+
+### 장점
+
+* 프론트/백엔드 TypeScript 단일 언어 운영 가능
+* DTO/enum/shared type 공유가 쉬움
+* 팀이 TS 중심이면 초기 온보딩이 빠름
+
+### 단점
+
+* OCR/분석이 커질수록 Python worker를 따로 두게 될 가능성이 높음
+* 장기적으로는 Node API + Python worker 혼합 구조가 될 수 있음
+* 현재 서비스는 분석/OCR 비중이 높아서 1안보다 덜 적합함
+
+---
+
+## 3. 선택 이유
+
+### 왜 1안이 더 적합한가
+
+1. 현재 서비스는 단순 CRUD보다 **OCR / 분석 / 비동기 배치**가 핵심이다. 6단계에서도 OCR 작업 상태, 분석 실행 상태, 결과 저장, 삭제 배치가 명확히 분리돼 있다. 
+2. 인증은 이미 **서버 세션 기반**으로 확정됐고, 저장소 장애 시 완전 차단 정책도 확정돼 있다. 따라서 Redis 세션 저장이 가장 자연스럽다.
+3. 결과 저장은 `result_version` 기준 JSON 버전 관리가 필요하므로 PostgreSQL + JSONB가 적합하다.
+4. OCR 원본은 임시 저장 후 즉시 삭제해야 하므로 object storage + presigned upload 구조가 적합하다.
+5. 프론트는 `/app` 대시보드, 상태 화면, 운영자 화면, 에러/로딩 분리가 중요하므로 Next.js App Router 구성이 잘 맞는다.  ([Next.js][1])
+
+### 현재 서비스에 가장 적합한 최종 권장안
+
+**1안이 최종 권장안이다.**
+
+---
+
+## 4. 공통 에러 코드 확정본
+
+마스터 프롬프트의 기본 6개는 반드시 유지하고, 6단계에서 반영된 확장 후보 4개를 이번 단계에서 최종 확정한다.
+
+* `400 INVALID_INPUT`
+* `401 UNAUTHORIZED`
+* `403 FORBIDDEN`
+* `404 NOT_FOUND`
+* `409 CONFLICT`
+* `429 TOO_MANY_REQUESTS`
+* `500 INTERNAL_ERROR`
+* `502 BAD_GATEWAY`
+* `503 SERVICE_UNAVAILABLE`
+* `504 GATEWAY_TIMEOUT`
+
+### 사용 기준
+
+* `INVALID_INPUT`: 필드 검증 실패, enum 오류, 허용되지 않은 파일 형식, 잘못된 정렬값
+* `UNAUTHORIZED`: 세션 없음, 세션 만료, 세션 유실
+* `FORBIDDEN`: 관리자 권한 없음, owner check 실패
+* `NOT_FOUND`: 리소스 없음
+* `CONFLICT`: 중복 이메일, 이미 삭제됨, 잘못된 상태 전이, 이미 사용된 토큰
+* `TOO_MANY_REQUESTS`: 로그인/OCR/분석/문의/비밀번호 재설정 제한 초과
+* `BAD_GATEWAY`: 외부 메일/OCR 등 연동 서비스의 비정상 응답
+* `SERVICE_UNAVAILABLE`: 세션 저장소 장애, DB/스토리지/큐의 일시 장애
+* `GATEWAY_TIMEOUT`: 외부 연동 timeout
+* `INTERNAL_ERROR`: 분류되지 않은 내부 오류
+
+### 공통 실패 응답 포맷 확정
+
+```json
+{
+  "success": false,
+  "code": "INTERNAL_ERROR",
+  "message": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+  "detail": {},
+  "request_id": "trace-id"
+}
+```
+
+### 메시지 원칙
+
+* 일시적 장애: “잠시 후 다시 시도해주세요.”
+* 인증 만료: “로그인 상태가 만료되었습니다. 다시 로그인해주세요.”
+* 권한 부족: “접근 권한이 없습니다.”
+* 입력 오류: 필드 기준 구체 안내
+* 내부 구현, stack trace, 외부 연동 상세 오류는 응답에 노출 금지
+
+이 원칙은 6단계에서 추가된 공통 실패 응답과 예외처리 원칙을 그대로 따른다. 
+
+---
+
+## 5. 최종 확정안 1줄 요약
+
+**Next.js(App Router) + FastAPI + PostgreSQL + Redis + Cloudflare R2 + Vercel/Render**
+
+이 문장을 8~12단계에서 **기준 스택**으로 계속 참조하면 된다. 마스터 프롬프트도 7단계에서 이 1줄 요약을 기준 스택으로 넘기도록 요구한다. 
+
+---
+
+## 6. 확정이 필요한 항목
+
+**없음**
+
+이번 단계에서 6단계의 핵심 미정 항목은 모두 닫았다.
+다만 아래 2개는 미정이 아니라 **후속 단계 작업 항목**이다.
+
+* 악성 파일 검사: **P1 / 11단계 운영 보강**
+* 관리자 사용자 차단/복구 UI: **P1**
+
+---
+
+## 1. 이번 단계 확정 사항
+
+1. 기준 스택을 **Next.js(App Router) + FastAPI + PostgreSQL + Redis + Cloudflare R2 + Vercel/Render**로 확정했다.
+2. 세션 저장소를 **Redis**로 확정했다.
+3. 상태관리를 **TanStack Query + RHF + Zod + Zustand(UI 한정)** 으로 확정했다.
+4. ORM/DB 접근은 **SQLAlchemy 2.0 + Alembic**으로 확정했다.
+5. 비동기 구조는 **FastAPI + Redis queue + Worker + Cron**으로 확정했다.
+6. 공통 에러 코드를 **10개 표준 코드**로 확정했다.
+7. 분석 결과 API DTO를 **v1 고정 스키마**로 확정했다.
+8. Rate Limit 수치를 이번 단계 기준값으로 확정했다.
+9. 악성 파일 검사는 **P0 제외**, 관리자 사용자 차단/복구 화면은 **P1**로 정리했다.
+
+## 2. 다음 단계 입력으로 넘길 핵심 요약
+
+* 기준 스택: **Next.js(App Router) + FastAPI + PostgreSQL + Redis + Cloudflare R2 + Vercel/Render**
+* 인증: **서버 세션 + Redis + `user_sessions`**
+* 스토리지: **R2 presigned upload + OCR 원본 즉시 삭제**
+* 상태관리: **TanStack Query / RHF / Zod / Zustand**
+* ORM: **SQLAlchemy 2.0 + Alembic**
+* 배포: **Vercel(프론트), Render(API/worker/cron)**
+* 공통 에러 코드:
+
+  * `INVALID_INPUT`
+  * `UNAUTHORIZED`
+  * `FORBIDDEN`
+  * `NOT_FOUND`
+  * `CONFLICT`
+  * `TOO_MANY_REQUESTS`
+  * `INTERNAL_ERROR`
+  * `BAD_GATEWAY`
+  * `SERVICE_UNAVAILABLE`
+  * `GATEWAY_TIMEOUT`
+* 결과 DTO v1 블록:
+
+  * `summary`
+  * `final_recommendation`
+  * `warnings`
+  * `targets`
+  * `metadata`
+* Rate Limit 확정값:
+
+  * 로그인 5회/10분(이메일), 20회/10분(IP)
+  * 재설정 요청 3회/30분(이메일), 10회/30분(IP)
+  * OCR 10회/10분(사용자)
+  * 분석 5회/10분(사용자)
+  * 문의 5회/30분(사용자)
+
+## 3. 추가 확인 필요 항목
+
+없음.
+
+## 4. 충돌 가능 항목
+
+1. 8단계에서 큐 라이브러리를 Celery 대신 다른 Python worker로 바꿔도 아키텍처 원칙은 유지되지만, 폴더 구조와 실행 파일은 달라질 수 있다.
+2. 11단계에서 비용/운영 정책 때문에 R2 대신 S3로 바꾸면 업로드 흐름은 유지되지만 환경변수와 SDK 설정은 바뀔 수 있다.
+3. 12단계 성능 테스트 결과에 따라 Rate Limit 수치는 조정될 수 있지만, 공통 에러 코드와 응답 포맷은 유지하는 것이 맞다.
+
+이제 다음으로는 **8단계 프로젝트 구조 및 구현 계획**으로 넘어가면 됩니다.
+
+[1]: https://nextjs.org/docs?utm_source=chatgpt.com "Next.js Docs"
+[2]: https://fastapi.tiangolo.com/features/?utm_source=chatgpt.com "Features - FastAPI"
+[3]: https://developers.cloudflare.com/r2/api/s3/presigned-urls/?utm_source=chatgpt.com "Presigned URLs · Cloudflare R2 docs"
+[4]: https://vercel.com/docs/deployments/environments?utm_source=chatgpt.com "Environments - Vercel"

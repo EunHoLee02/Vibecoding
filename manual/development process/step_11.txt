@@ -1,0 +1,369 @@
+11단계 인프라 / 배포 / 실행 파일 초안
+
+기준:
+- 10c단계 프론트엔드 P0 기능 구현 종료 보고
+- 10b단계 백엔드 P0 구현 종료 보고
+- 10a 인증/세션 방식 확정본
+- 9단계 DB 설계
+- 7단계 기술 스택 확정본
+
+충돌 항목:
+1. 8단계/9단계 확정 이력에는 EasyOCR 기준 흔적이 남아 있지만, 현재 실제 backend 구현 코드는 `paddleocr`를 import하고 기본값도 `paddleocr`다.
+   - 근거 파일:
+     - `manual/development process/step_8.txt`
+     - `manual/development process/step_9.txt`
+     - `apps/backend/app/core/config.py`
+     - `apps/backend/app/integrations/ocr/engine.py`
+   - 11단계 처리:
+     - 현재 운영/배포 기준 문서와 환경변수 샘플은 `paddleocr`를 authoritative 값으로 사용한다.
+     - 과거 단계 문서는 이력으로 유지하고, 최신 운영 기준은 이 11단계 문서를 우선 적용한다.
+2. 현재 `apps/backend/app/integrations/r2/client.py`는 이름만 R2Client이고 실제 구현은 로컬 파일시스템 저장이다.
+   - 근거 파일:
+     - `apps/backend/app/integrations/r2/client.py`
+   - 11단계 처리:
+     - dev / Docker local은 로컬 볼륨 기반으로 유지한다.
+     - staging / prod 권장안은 Cloudflare R2 같은 S3-compatible object storage로 분리한다.
+     - 멀티 인스턴스 운영 전에는 실제 object storage adapter 교체가 필요하다.
+
+이번 단계 인프라 / 배포 초안 요약:
+1. 프론트엔드는 Next.js 특성에 맞춰 Vercel 배포를 1순위 권장안으로 둔다.
+2. 백엔드는 Dockerfile 기반 FastAPI 서비스로 패키징하고, Render 같은 Docker 지원 PaaS 또는 단일 VM 배포가 가능하도록 정리한다.
+3. DB는 managed PostgreSQL, Redis는 managed Redis를 권장하고, local / dev는 `docker-compose.yml`로 재현 가능하게 둔다.
+4. 파일 스토리지는 dev에서는 로컬 볼륨, staging / prod에서는 S3-compatible object storage 권장으로 정리한다.
+5. 헬스체크는 프론트 `/api/health`, 백엔드 `/health/live`, `/health/ready` 기준으로 맞춘다.
+6. CI 초안은 GitHub Actions 기준으로 프론트 빌드, 백엔드 의존성 설치, migration, health smoke test까지 포함한다.
+7. OCR 엔진 운영 기준은 `paddleocr`로 고정한다.
+
+추천 배포 플랫폼과 이유:
+1. 프론트엔드
+   - 추천: Vercel
+   - 이유:
+     - 현재 앱이 Next.js App Router 기반이라 배포 호환성이 높다.
+     - preview deployment 흐름이 강해서 `feature/PR -> preview`, `main -> production` 분리 운영이 쉽다.
+     - 프론트와 백엔드 배포 수명주기를 분리하기 좋다.
+2. 백엔드
+   - 추천: Render Docker web service
+   - 이유:
+     - 현재 백엔드는 FastAPI + Alembic + Redis + Postgres 조합이라 Docker 배포와 잘 맞는다.
+     - Dockerfile 기준 배포면 local / staging / prod 재현성이 높다.
+     - 환경변수 주입, 헬스체크 연결, 롤백 운영이 비교적 단순하다.
+3. DB
+   - 추천: managed PostgreSQL
+   - 우선 권장 예시: Neon
+   - 이유:
+     - Postgres 호환성이 높다.
+     - staging / preview DB 분리에 유리하다.
+4. Redis
+   - 추천: managed Redis
+   - 우선 권장 예시: Upstash
+   - 이유:
+     - 세션 캐시 용도에 맞고 운영 부담이 낮다.
+5. 파일 스토리지
+   - 추천:
+     - dev / single-node staging: local volume
+     - production: Cloudflare R2 또는 다른 S3-compatible object storage
+   - 이유:
+     - 현재 업로드 흐름은 object storage 전환과 궁합이 좋다.
+     - 멀티 인스턴스 운영에서는 로컬 디스크 공유가 안 되므로 외부 스토리지가 필요하다.
+
+프론트엔드 배포 방식:
+1. 배포 단위: `apps/frontend`
+2. 빌드 명령: `npm run build`
+3. 실행 명령: `npm run start -- --hostname 0.0.0.0 --port 3000`
+4. 환경 전략:
+   - preview: PR/브랜치별 preview URL
+   - staging: staging API URL로 별도 빌드
+   - production: production API URL로 별도 빌드
+5. 운영 주의:
+   - `NEXT_PUBLIC_API_BASE_URL`은 클라이언트 번들에 포함되는 build-time 값이다.
+   - preview/staging/prod는 반드시 각 환경별 값으로 다시 빌드해야 한다.
+   - preview 빌드 산출물을 production에 재사용하면 잘못된 API 주소가 번들될 수 있다.
+6. SSR/서버 fetch용 값:
+   - `API_BASE_URL`은 서버사이드 fetch용이다.
+   - 같은 호스트 구조면 public URL을 써도 되고, 플랫폼이 private service URL을 주면 내부 URL 사용도 가능하다.
+
+백엔드 배포 방식:
+1. 배포 단위: `apps/backend`
+2. 배포 형식: Docker image
+3. 현재 기본 시작 명령:
+   - `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000`
+4. 운영 권장:
+   - 초기 P0 운영에서는 위 방식 사용 가능
+   - 운영 규모가 커지면 migration step과 app startup step을 분리
+5. 운영 주의:
+   - OCR 파일이 로컬 스토리지에 남는 구조이므로 multi-instance autoscale 전에는 object storage 전환이 필요하다.
+
+DB 호스팅 방식:
+1. dev:
+   - `docker-compose`의 Postgres 사용
+2. staging:
+   - managed PostgreSQL 별도 인스턴스
+   - production과 분리된 DB
+3. prod:
+   - managed PostgreSQL
+   - 자동 백업 / PITR 가능한 플랜 권장
+4. migration 전략:
+   - 현재 초안은 backend boot 전에 `alembic upgrade head` 수행
+   - production에서 인스턴스 수가 늘어나면 release job 또는 one-off migration command로 분리
+   - destructive migration 전에는 snapshot / restore point 확보
+
+파일 스토리지 방식:
+1. dev:
+   - backend container volume mount
+2. staging:
+   - single-node면 volume mount 허용
+   - multi-instance 검토 시점부터 R2 전환 우선
+3. prod:
+   - S3-compatible object storage 권장
+   - presigned upload, source delete, OCR fetch 경로를 object storage 기반으로 이관
+4. 추가 운영 메모:
+   - 현재 `R2Client`는 로컬 shim이라 이름과 실제 동작이 다르다.
+   - production 멀티 인스턴스에 그대로 쓰면 업로드/OCR 파일 정합성 문제가 생길 수 있다.
+
+도메인 연결 필요 여부:
+1. 필요
+2. 권장 구조:
+   - frontend: `app.example.com`
+   - backend API: `api.example.com`
+3. 이유:
+   - 세션 쿠키, CORS, TLS, 운영 로그 추적 분리에 유리하다.
+
+HTTPS / SSL 적용 방식:
+1. 프론트
+   - Vercel managed TLS 사용
+2. 백엔드
+   - Render 또는 ingress provider managed TLS 사용
+3. 쿠키 운영:
+   - staging / prod에서는 `AUTH_COOKIE_SECURE=true`
+   - SameSite는 현재 `lax` 유지
+
+CDN 필요 여부:
+1. 프론트 정적 자산:
+   - 필요
+   - Vercel CDN 사용
+2. 백엔드 API:
+   - 별도 CDN 필수 아님
+3. 업로드 이미지 / object storage:
+   - public delivery가 필요해지는 시점에 object storage edge delivery 또는 CDN 검토
+
+dev / staging / prod 환경 분리 전략:
+1. dev
+   - 목적: 로컬 개발
+   - 구성: docker-compose + 로컬 env + 로컬 storage
+2. staging
+   - 목적: 배포 검증 / QA / 브라우저 E2E
+   - 구성: production과 유사한 managed DB / Redis
+   - 데이터: production과 분리
+3. prod
+   - 목적: 실제 사용자 서비스
+   - 구성: managed DB / Redis / object storage / HTTPS
+4. 브랜치 권장:
+   - `feature/*` -> preview
+   - `develop` -> staging
+   - `main` -> production
+
+환경변수 및 비밀키 관리 전략:
+1. 원칙
+   - `.env.example`에는 placeholder만 포함
+   - 실제 `.env`, `.env.local`은 git commit 금지
+2. 위치
+   - root `.env.example`: docker-compose 및 전체 스택 샘플
+   - `apps/backend/.env.example`: backend 전용 샘플
+   - `apps/frontend/.env.example`: frontend 전용 샘플
+3. OCR 기준
+   - 현재 authoritative 값은 `OCR_ENGINE=paddleocr`
+4. 민감 정보
+   - `POSTGRES_PASSWORD`
+   - `R2_ACCESS_KEY_ID`
+   - `R2_SECRET_ACCESS_KEY`
+   - production domain / cookie domain
+5. 저장 위치
+   - local: `.env`, `.env.local`
+   - staging/prod: 플랫폼 secret manager
+
+헬스 체크 엔드포인트 설계:
+1. 프론트
+   - `GET /api/health`
+   - 목적: Next.js runtime이 요청을 처리 가능한지 확인
+2. 백엔드 liveness
+   - `GET /health/live`
+   - 목적: 프로세스 부팅과 HTTP 응답 가능 여부 확인
+3. 백엔드 readiness
+   - `GET /health/ready`
+   - 목적:
+     - DB query 가능
+     - Redis ping 가능
+     - writable storage 확인 가능
+   - 상태코드:
+     - 200: ready
+     - 503: degraded / dependency unavailable
+
+로그 및 모니터링 도구 제안:
+1. P0 기본
+   - 플랫폼 로그 수집
+   - Vercel app logs
+   - Render service logs
+2. 권장 추가
+   - Uptime monitor: UptimeRobot 또는 플랫폼 health monitor
+   - Error tracking: Sentry
+   - Infra metrics: 플랫폼 기본 metrics
+3. 로그 기준
+   - request_id 포함
+   - auth / OCR / analysis / inquiry 에러에 structured log 권장
+
+장애 대응 기본 전략:
+1. 증상 분류
+   - frontend only
+   - backend API only
+   - DB / Redis dependency
+   - OCR / storage path
+2. 우선 순위
+   - health endpoint 상태 확인
+   - 최근 배포와 장애 시작 시점 비교
+   - 데이터 저장소 가용성 우선 확인
+3. 롤백 기준
+   - main deploy 직후 오류 급증
+   - readiness 503 지속
+   - 로그인 / 저장 / OCR 요청 실패 반복
+
+운영 장애 시 1차 대응 순서:
+1. 프론트 `GET /api/health` 확인
+2. 백엔드 `GET /health/live` 확인
+3. 백엔드 `GET /health/ready` 확인
+4. 애플리케이션 로그 확인
+5. DB 연결 상태 확인
+6. Redis 연결 상태 확인
+7. OCR storage 또는 외부 object storage 연결 확인
+8. 최근 배포 이력 확인
+9. 필요 시 직전 안정 버전으로 롤백
+
+백업 및 복구 고려사항:
+1. Postgres
+   - managed backup / PITR 사용 권장
+   - production은 최소 daily backup + restore 점검 문서화
+2. Redis
+   - 세션 캐시 성격상 강한 백업 필요도는 낮음
+   - 장애 시 재로그인 허용 전략 필요
+3. OCR 파일
+   - 현재 local storage는 복구 한계가 큼
+   - production object storage 전환 시 lifecycle rule과 soft retention 검토
+4. migration
+   - destructive migration 전 snapshot / restore point 확보
+
+CI/CD 파이프라인 초안:
+1. 트리거
+   - push to `main`, `develop`
+   - pull request
+2. frontend job
+   - `npm ci`
+   - `npm run typecheck`
+   - `npm run build`
+3. backend job
+   - Python 3.11 setup
+   - `pip install -r requirements.txt`
+   - CI env 작성
+   - `alembic upgrade head`
+   - `python -c "from app.main import app"`
+   - uvicorn boot
+   - `/health/live`, `/health/ready` smoke test
+4. CD 권장 흐름
+   - frontend:
+     - PR -> preview deploy
+     - main -> production deploy
+   - backend:
+     - main image build
+     - staging deploy
+     - smoke test
+     - production 승인 배포
+5. migration 운영 확장안
+   - 현재는 startup migration 허용
+   - 추후 production 규모가 커지면 release job 분리
+
+배포 전 자동 테스트 / 빌드 체크 항목:
+1. frontend
+   - typecheck
+   - Next build
+2. backend
+   - dependency install
+   - Alembic migration
+   - app import smoke test
+   - health endpoint smoke test
+3. 공통
+   - env example 최신 여부
+   - Docker build 성공 여부
+
+이번 단계에서 작성 / 보강한 파일:
+- `manual/development process/step_11.txt`
+- `.env.example`
+- `.gitignore`
+- `README.md`
+- `docker-compose.yml`
+- `apps/backend/.env.example`
+- `apps/backend/requirements.txt`
+- `apps/backend/Dockerfile`
+- `apps/backend/app/api/v1/health.py`
+- `apps/frontend/Dockerfile`
+- `apps/frontend/app/api/health/route.ts`
+- `.github/workflows/ci.yml`
+- `apps/frontend/package.json`
+
+파일별 목적과 사용 시점:
+1. `.env.example`
+   - 목적: 전체 스택 공용 환경변수 샘플
+   - 사용 시점: 로컬 실행 / compose 실행 / onboarding
+2. `apps/backend/.env.example`
+   - 목적: backend 단독 실행 샘플
+   - 사용 시점: backend local dev / CI env
+3. `apps/backend/requirements.txt`
+   - 목적: backend Python dependency 고정
+   - 사용 시점: local install / Docker build / CI
+4. `apps/frontend/Dockerfile`
+   - 목적: Next.js production image 빌드
+   - 사용 시점: container staging / self-host / smoke test
+5. `apps/backend/Dockerfile`
+   - 목적: FastAPI + Alembic + OCR runtime image 빌드
+   - 사용 시점: backend container deploy
+6. `docker-compose.yml`
+   - 목적: local full stack 재현
+   - 사용 시점: 개발 / staging-like smoke test
+7. `.gitignore`
+   - 목적: secret / build artifact / local volume 제외
+   - 사용 시점: 즉시
+8. `README.md`
+   - 목적: 실행 / 배포 handoff 가이드
+   - 사용 시점: onboarding / QA / infra handoff
+9. `.github/workflows/ci.yml`
+   - 목적: build / migration / health smoke test 자동화
+   - 사용 시점: GitHub Actions 연결 시점
+10. `apps/backend/app/api/v1/health.py`
+    - 목적: readiness / liveness endpoint 제공
+    - 사용 시점: compose healthcheck / platform healthcheck / ops
+11. `apps/frontend/app/api/health/route.ts`
+    - 목적: frontend healthcheck endpoint 제공
+    - 사용 시점: platform healthcheck / uptime monitor
+
+이번 단계 확정 사항:
+1. 11단계 운영 기준 OCR 엔진은 `paddleocr`로 정리한다.
+2. local 실행 env와 배포 문서 기준을 `paddleocr`로 통일한다.
+3. 프론트 build-time API URL 분리 전략을 11단계 문서에 반영한다.
+4. R2 shim은 dev/single-node 전용으로 보고, multi-instance production 전 object storage adapter 교체를 필수 후속 과제로 둔다.
+5. migration은 현재 startup 방식 허용하되, production 확장 시 release step 분리를 권장한다.
+
+다음 단계 입력으로 넘길 핵심 요약:
+1. 최신 운영 기준 문서에서 OCR 엔진은 `paddleocr`다.
+2. preview/staging/prod는 `NEXT_PUBLIC_API_BASE_URL`을 각 환경별로 다시 빌드해야 한다.
+3. production-ready 핵심 후속 과제는 `local storage shim -> real object storage adapter` 전환이다.
+4. backend migration은 현재 startup 방식이지만 추후 release job 분리 여지가 있다.
+
+추가 확인 필요 항목:
+1. production OCR 운영 시 실제 object storage 전환 시점
+2. backend scale-out 필요 시 worker 분리 여부
+3. production 도메인과 `AUTH_COOKIE_DOMAIN` 확정
+4. staging에서 `API_BASE_URL`을 private URL로 둘지 public URL로 둘지 플랫폼 기준 확인
+5. `paddleocr` 런타임 리소스 요구량에 맞는 backend 최소 스펙
+
+충돌 가능 항목:
+1. 8단계/9단계 이력 문서를 runtime 기준으로 그대로 해석하면 OCR 엔진 혼선이 생길 수 있다.
+2. local storage 기반 OCR 구현을 production multi-instance 구조로 오해하면 업로드/OCR 파일 정합성 문제가 생길 수 있다.
+3. frontend `NEXT_PUBLIC_API_BASE_URL`은 build-time 값이라 환경별 빌드 분리를 잘못하면 잘못된 API 주소가 번들될 수 있다.
+4. migration을 app boot와 같이 실행하는 방식은 초기 배포에는 편하지만, production 운영 규모가 커지면 별도 migration step 분리가 필요할 수 있다.

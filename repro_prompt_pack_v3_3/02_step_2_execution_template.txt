@@ -1,0 +1,78 @@
+[실행용 축약 템플릿 - 2단계 상세 기능 명세서]
+
+이번에는 [2단계]만 수행해줘.
+아직 다음 단계는 수행하지 말아줘.
+
+[Canonical Decision Register]
+(최신 frozen_values만 남기고 붙여넣기)
+
+[이전 단계 authoritative_updates]
+(직전 단계 YAML 그대로 붙여넣기)
+
+[이전 단계 확정본 요약]
+- 이번 단계 확정 사항:
+- 다음 단계 입력으로 넘길 핵심 요약:
+
+[이번 단계 입력 체크리스트]
+- 1단계 PRD 확정본
+- P0/P1/P2 우선순위
+- Canonical Decision Register
+
+[이번 단계 추가 입력]
+- 새로 확정할 값:
+- 변경할 값:
+- deprecated 처리할 값:
+- 유지할 frozen_values:
+- 추가 제약/예외:
+- 운영/보안/권한 관련 메모:
+
+[이번 단계 프롬프트]
+2단계 요구사항만 수행해줘.
+
+[출력에 반드시 포함할 섹션]
+- 기능 ID
+- 기능명
+- 우선순위
+- 기능 설명
+- 목적
+- 사용자 유형
+- 사전 조건
+- 입력값
+- 처리 로직
+- 출력값
+- 상태값/enum
+- 예외 처리
+- 권한 체크
+- 로그/이벤트 포인트
+- 관련 API
+- 관련 DB 엔터티
+
+- 이번 단계 확정 사항
+- 다음 단계 입력으로 넘길 핵심 요약
+- 추가 확인 필요 항목
+- 충돌 가능 항목
+- 바로 다음 단계 진행 가능 항목
+- 단계 상태
+- authoritative_updates YAML
+
+[authoritative_updates YAML 템플릿]
+authoritative_updates:
+  frozen_values:
+    key: value
+  supersedes:
+    - old_source -> new_source
+  deprecated:
+    - deprecated_key_or_rule
+  carry_forward_only:
+    - key1
+    - key2
+  do_not_carry_forward:
+    - key3
+    - key4
+
+stage_status:
+  maturity: draft|provisional|minimum_complete|fully_verified
+  unresolved_conflicts:
+    - none
+  missing_p0_items:
+    - none

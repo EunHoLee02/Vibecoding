@@ -1,0 +1,921 @@
+좋습니다.
+그럼 **10b단계 백엔드 P0 기능 구현**을 시작하겠습니다.
+
+이번 턴은 조건대로 한 번에 전체를 다 쓰지 않고, **첫 구현 묶음**만 진행합니다.
+
+### 이번 턴 구현 범위
+
+1. 공통 응답 포맷 / 공통 에러 포맷
+2. 공통 enum / supplement canonical schema
+3. DB 모델 초안
+4. repository / service 초안
+5. **영양제 수동 등록/목록/상세/수정/삭제/복구 API**
+6. 각 파일 역할
+7. API별 단위 테스트 케이스 목록
+
+이 범위는 앞서 확정한 충돌 해소안, 7단계 공통 에러 코드, 9단계 DB 연결 구조, 10a 인증 구조를 기준으로 작성합니다. 영양제는 `supplement + supplement_ingredients` canonical 구조를 사용하고, 공통 에러는 10개를 모두 사용합니다.    
+
+---
+
+# 충돌 항목
+
+없음.
+직전 턴에서 닫은 최종 결정안을 기준으로 이번 구현 묶음을 시작합니다.
+
+---
+
+# 구현 영향 범위
+
+* `supplements`
+* `supplement_ingredients`
+* 공통 예외 처리
+* 공통 응답 래퍼
+* supplement API request/response schema
+* owner check / soft delete / restore 로직
+
+---
+
+# 10b 구현 1차: 공통 기반 + Supplements API
+
+## 1. 파일 구조
+
+기준 경로: `apps/backend/app`
+
+```text
+app/
+├─ api/
+│  ├─ deps/
+│  │  └─ auth.py                  # 10a에서 이미 존재한다고 가정
+│  └─ v1/
+│     └─ supplements.py
+├─ common/
+│  ├─ enums.py
+│  └─ responses.py
+├─ core/
+│  └─ exceptions.py
+├─ db/
+│  ├─ models/
+│  │  ├─ supplement.py
+│  │  └─ supplement_ingredient.py
+│  └─ repositories/
+│     ├─ supplement_repository.py
+│     └─ supplement_ingredient_repository.py
+├─ schemas/
+│  └─ supplement.py
+└─ services/
+   └─ supplement_service.py
+```
+
+---
+
+## 2. 공통 응답 / 에러 포맷
+
+### 2-1. `app/common/responses.py`
+
+역할:
+
+* 성공 응답 래퍼
+* 목록 응답용 meta 래퍼
+
+```python
+from typing import Any
+
+def success_response(data: Any, meta: dict | None = None) -> dict:
+    return {
+        "success": True,
+        "data": data,
+        "meta": meta or {},
+    }
+```
+
+---
+
+### 2-2. `app/core/exceptions.py`
+
+역할:
+
+* 공통 에러 코드 10개
+* 앱 공통 예외
+* FastAPI 예외 핸들러
+
+```python
+from enum import Enum
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+
+class ErrorCode(str, Enum):
+    INVALID_INPUT = "INVALID_INPUT"
+    UNAUTHORIZED = "UNAUTHORIZED"
+    FORBIDDEN = "FORBIDDEN"
+    NOT_FOUND = "NOT_FOUND"
+    CONFLICT = "CONFLICT"
+    TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+    BAD_GATEWAY = "BAD_GATEWAY"
+    SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
+    GATEWAY_TIMEOUT = "GATEWAY_TIMEOUT"
+
+
+class AppException(Exception):
+    def __init__(
+        self,
+        status_code: int,
+        code: ErrorCode,
+        message: str,
+        detail: dict | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+        self.detail = detail or {}
+
+
+async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", None)
+
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "code": exc.code.value,
+            "message": exc.message,
+            "detail": exc.detail,
+            "request_id": request_id,
+        },
+    )
+```
+
+---
+
+## 3. 공통 enum
+
+### 3-1. `app/common/enums.py`
+
+역할:
+
+* supplement / ingredient 관련 상태값 정의
+* API/DB 공통 enum source
+
+```python
+from enum import Enum
+
+
+class SupplementSourceType(str, Enum):
+    MANUAL = "manual"
+    OCR = "ocr"
+    HYBRID = "hybrid"
+
+
+class SupplementStatus(str, Enum):
+    ACTIVE = "active"
+    ANALYZABLE = "analyzable"
+    ANALYSIS_LOCKED = "analysis_locked"
+    ARCHIVED = "archived"
+    DELETED = "deleted"
+
+
+class ServingBasisType(str, Enum):
+    PER_SERVING = "per_serving"
+    PER_DAY = "per_day"
+
+
+class IngredientMatchStatus(str, Enum):
+    MATCHED = "matched"
+    PARTIAL_MATCHED = "partial_matched"
+    UNMATCHED = "unmatched"
+```
+
+---
+
+## 4. DB 모델
+
+## 4-1. `app/db/models/supplement.py`
+
+역할:
+
+* supplement 기본 엔터티
+* soft delete 포함
+
+```python
+from datetime import datetime
+from uuid import uuid4
+
+from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.common.enums import SupplementSourceType, SupplementStatus, ServingBasisType
+from app.db.base import Base
+
+
+class Supplement(Base):
+    __tablename__ = "supplements"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[str] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+
+    source_type: Mapped[SupplementSourceType] = mapped_column(
+        SAEnum(SupplementSourceType, name="supplement_source_type"),
+        nullable=False,
+        default=SupplementSourceType.MANUAL,
+    )
+    product_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    manufacturer: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    serving_basis_type: Mapped[ServingBasisType] = mapped_column(
+        SAEnum(ServingBasisType, name="serving_basis_type"),
+        nullable=False,
+    )
+    daily_serving_count: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    memo: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    status: Mapped[SupplementStatus] = mapped_column(
+        SAEnum(SupplementStatus, name="supplement_status"),
+        nullable=False,
+        default=SupplementStatus.ACTIVE,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    ingredients = relationship(
+        "SupplementIngredient",
+        back_populates="supplement",
+        cascade="all, delete-orphan",
+    )
+```
+
+---
+
+## 4-2. `app/db/models/supplement_ingredient.py`
+
+역할:
+
+* supplement 성분 상세 엔터티
+* 분석용 canonical row
+
+```python
+from datetime import datetime
+from uuid import uuid4
+
+from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Numeric, String, Boolean
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.common.enums import IngredientMatchStatus
+from app.db.base import Base
+
+
+class SupplementIngredient(Base):
+    __tablename__ = "supplement_ingredients"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    supplement_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("supplements.id"),
+        nullable=False,
+    )
+
+    ingredient_name_raw: Mapped[str] = mapped_column(String(200), nullable=False)
+    ingredient_name_standard: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ingredient_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    amount_value: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False)
+    amount_unit: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    is_primary_display_value: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    match_status: Mapped[IngredientMatchStatus] = mapped_column(
+        SAEnum(IngredientMatchStatus, name="ingredient_match_status"),
+        nullable=False,
+        default=IngredientMatchStatus.UNMATCHED,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    supplement = relationship("Supplement", back_populates="ingredients")
+```
+
+---
+
+## 5. Pydantic schema
+
+### 5-1. `app/schemas/supplement.py`
+
+역할:
+
+* supplements API request/response
+* 입력 검증
+
+```python
+from decimal import Decimal
+from uuid import UUID
+
+from pydantic import BaseModel, Field, field_validator
+
+from app.common.enums import (
+    IngredientMatchStatus,
+    ServingBasisType,
+    SupplementSourceType,
+    SupplementStatus,
+)
+
+
+class SupplementIngredientBase(BaseModel):
+    ingredient_name_raw: str = Field(min_length=1, max_length=200)
+    amount_value: Decimal = Field(gt=0)
+    amount_unit: str = Field(min_length=1, max_length=50)
+    is_primary_display_value: bool = False
+
+    @field_validator("ingredient_name_raw", "amount_unit")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class SupplementIngredientCreate(SupplementIngredientBase):
+    pass
+
+
+class SupplementIngredientResponse(SupplementIngredientBase):
+    id: UUID
+    ingredient_name_standard: str | None = None
+    ingredient_code: str | None = None
+    match_status: IngredientMatchStatus
+
+    class Config:
+        from_attributes = True
+
+
+class SupplementCreateRequest(BaseModel):
+    product_name: str = Field(min_length=1, max_length=200)
+    manufacturer: str | None = Field(default=None, max_length=200)
+    serving_basis_type: ServingBasisType
+    daily_serving_count: Decimal | None = Field(default=None, gt=0)
+    memo: str | None = None
+    ingredient_list: list[SupplementIngredientCreate] = Field(min_length=1)
+
+    @field_validator("product_name")
+    @classmethod
+    def strip_name(cls, value: str) -> str:
+        return value.strip()
+
+
+class SupplementUpdateRequest(BaseModel):
+    product_name: str | None = Field(default=None, min_length=1, max_length=200)
+    manufacturer: str | None = Field(default=None, max_length=200)
+    serving_basis_type: ServingBasisType | None = None
+    daily_serving_count: Decimal | None = Field(default=None, gt=0)
+    memo: str | None = None
+    ingredient_list: list[SupplementIngredientCreate] | None = None
+
+
+class SupplementResponse(BaseModel):
+    id: UUID
+    source_type: SupplementSourceType
+    product_name: str
+    manufacturer: str | None = None
+    serving_basis_type: ServingBasisType
+    daily_serving_count: Decimal | None = None
+    memo: str | None = None
+    status: SupplementStatus
+    deleted_at: str | None = None
+    ingredients: list[SupplementIngredientResponse]
+
+    class Config:
+        from_attributes = True
+
+
+class SupplementListItem(BaseModel):
+    id: UUID
+    product_name: str
+    manufacturer: str | None = None
+    source_type: SupplementSourceType
+    status: SupplementStatus
+
+    class Config:
+        from_attributes = True
+```
+
+---
+
+## 6. Repository
+
+### 6-1. `app/db/repositories/supplement_repository.py`
+
+역할:
+
+* supplement 조회/생성/수정/soft delete/restore
+
+```python
+from datetime import datetime
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
+
+from app.common.enums import SupplementStatus
+from app.db.models.supplement import Supplement
+
+
+class SupplementRepository:
+    def get_list(self, db: Session, user_id, include_deleted: bool = False) -> list[Supplement]:
+        stmt = (
+            select(Supplement)
+            .where(Supplement.user_id == user_id)
+            .options(selectinload(Supplement.ingredients))
+            .order_by(Supplement.updated_at.desc())
+        )
+
+        if not include_deleted:
+            stmt = stmt.where(Supplement.deleted_at.is_(None))
+
+        return list(db.scalars(stmt).all())
+
+    def get_by_id(self, db: Session, supplement_id, user_id) -> Supplement | None:
+        stmt = (
+            select(Supplement)
+            .where(
+                Supplement.id == supplement_id,
+                Supplement.user_id == user_id,
+            )
+            .options(selectinload(Supplement.ingredients))
+        )
+        return db.scalar(stmt)
+
+    def create(self, db: Session, supplement: Supplement) -> Supplement:
+        db.add(supplement)
+        db.flush()
+        db.refresh(supplement)
+        return supplement
+
+    def soft_delete(self, db: Session, supplement: Supplement) -> Supplement:
+        supplement.deleted_at = datetime.utcnow()
+        supplement.status = SupplementStatus.DELETED
+        db.flush()
+        db.refresh(supplement)
+        return supplement
+
+    def restore(self, db: Session, supplement: Supplement) -> Supplement:
+        supplement.deleted_at = None
+        supplement.status = SupplementStatus.ACTIVE
+        db.flush()
+        db.refresh(supplement)
+        return supplement
+```
+
+---
+
+### 6-2. `app/db/repositories/supplement_ingredient_repository.py`
+
+역할:
+
+* ingredient 교체 저장
+
+```python
+from app.db.models.supplement_ingredient import SupplementIngredient
+
+
+class SupplementIngredientRepository:
+    def replace_all(self, db, supplement, ingredients_payload: list[dict]) -> None:
+        supplement.ingredients.clear()
+
+        for item in ingredients_payload:
+            supplement.ingredients.append(
+                SupplementIngredient(
+                    ingredient_name_raw=item["ingredient_name_raw"],
+                    amount_value=item["amount_value"],
+                    amount_unit=item["amount_unit"],
+                    is_primary_display_value=item.get("is_primary_display_value", False),
+                )
+            )
+
+        db.flush()
+```
+
+---
+
+## 7. Service
+
+### 7-1. `app/services/supplement_service.py`
+
+역할:
+
+* 입력 검증 보강
+* owner check
+* soft delete / restore 정책
+* analysis_locked 수정 차단
+
+```python
+from fastapi import status
+
+from app.common.enums import SupplementSourceType, SupplementStatus
+from app.core.exceptions import AppException, ErrorCode
+from app.db.models.supplement import Supplement
+from app.db.repositories.supplement_repository import SupplementRepository
+from app.db.repositories.supplement_ingredient_repository import SupplementIngredientRepository
+
+
+class SupplementService:
+    def __init__(self) -> None:
+        self.supplement_repo = SupplementRepository()
+        self.ingredient_repo = SupplementIngredientRepository()
+
+    def list_supplements(self, db, user_id):
+        return self.supplement_repo.get_list(db=db, user_id=user_id)
+
+    def get_supplement(self, db, user_id, supplement_id):
+        supplement = self.supplement_repo.get_by_id(db=db, supplement_id=supplement_id, user_id=user_id)
+        if not supplement:
+            raise AppException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                code=ErrorCode.NOT_FOUND,
+                message="영양제를 찾을 수 없습니다.",
+            )
+        return supplement
+
+    def create_manual_supplement(self, db, user_id, payload):
+        supplement = Supplement(
+            user_id=user_id,
+            source_type=SupplementSourceType.MANUAL,
+            product_name=payload.product_name,
+            manufacturer=payload.manufacturer,
+            serving_basis_type=payload.serving_basis_type,
+            daily_serving_count=str(payload.daily_serving_count) if payload.daily_serving_count else None,
+            memo=payload.memo,
+            status=SupplementStatus.ACTIVE,
+        )
+        self.supplement_repo.create(db, supplement)
+        self.ingredient_repo.replace_all(
+            db=db,
+            supplement=supplement,
+            ingredients_payload=[item.model_dump() for item in payload.ingredient_list],
+        )
+        db.commit()
+        db.refresh(supplement)
+        return supplement
+
+    def update_supplement(self, db, user_id, supplement_id, payload):
+        supplement = self.get_supplement(db, user_id, supplement_id)
+
+        if supplement.deleted_at is not None:
+            raise AppException(
+                status_code=status.HTTP_409_CONFLICT,
+                code=ErrorCode.CONFLICT,
+                message="삭제된 영양제는 수정할 수 없습니다.",
+            )
+
+        if supplement.status == SupplementStatus.ANALYSIS_LOCKED:
+            raise AppException(
+                status_code=status.HTTP_409_CONFLICT,
+                code=ErrorCode.CONFLICT,
+                message="분석 중인 영양제는 수정할 수 없습니다.",
+            )
+
+        if payload.product_name is not None:
+            supplement.product_name = payload.product_name
+        if payload.manufacturer is not None:
+            supplement.manufacturer = payload.manufacturer
+        if payload.serving_basis_type is not None:
+            supplement.serving_basis_type = payload.serving_basis_type
+        if payload.daily_serving_count is not None:
+            supplement.daily_serving_count = str(payload.daily_serving_count)
+        if payload.memo is not None:
+            supplement.memo = payload.memo
+        if payload.ingredient_list is not None:
+            self.ingredient_repo.replace_all(
+                db=db,
+                supplement=supplement,
+                ingredients_payload=[item.model_dump() for item in payload.ingredient_list],
+            )
+
+        db.commit()
+        db.refresh(supplement)
+        return supplement
+
+    def delete_supplement(self, db, user_id, supplement_id):
+        supplement = self.get_supplement(db, user_id, supplement_id)
+
+        if supplement.deleted_at is not None:
+            raise AppException(
+                status_code=status.HTTP_409_CONFLICT,
+                code=ErrorCode.CONFLICT,
+                message="이미 삭제된 영양제입니다.",
+            )
+
+        if supplement.status == SupplementStatus.ANALYSIS_LOCKED:
+            raise AppException(
+                status_code=status.HTTP_409_CONFLICT,
+                code=ErrorCode.CONFLICT,
+                message="분석 중인 영양제는 삭제할 수 없습니다.",
+            )
+
+        self.supplement_repo.soft_delete(db, supplement)
+        db.commit()
+        return supplement
+
+    def restore_supplement(self, db, user_id, supplement_id):
+        supplement = self.get_supplement(db, user_id, supplement_id)
+
+        if supplement.deleted_at is None:
+            raise AppException(
+                status_code=status.HTTP_409_CONFLICT,
+                code=ErrorCode.CONFLICT,
+                message="삭제된 영양제만 복구할 수 있습니다.",
+            )
+
+        self.supplement_repo.restore(db, supplement)
+        db.commit()
+        db.refresh(supplement)
+        return supplement
+```
+
+---
+
+## 8. API
+
+### 8-1. `app/api/v1/supplements.py`
+
+역할:
+
+* supplements CRUD endpoint
+* 인증 dependency 연결
+* 공통 응답 포맷 적용
+
+```python
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.orm import Session
+
+from app.api.deps.auth import get_current_principal
+from app.common.responses import success_response
+from app.db.session import get_db
+from app.schemas.supplement import (
+    SupplementCreateRequest,
+    SupplementResponse,
+    SupplementUpdateRequest,
+    SupplementListItem,
+)
+from app.services.supplement_service import SupplementService
+
+router = APIRouter(prefix="/api/v1/supplements", tags=["supplements"])
+
+service = SupplementService()
+
+
+@router.get("", status_code=status.HTTP_200_OK)
+def list_supplements(
+    db: Session = Depends(get_db),
+    principal=Depends(get_current_principal),
+):
+    items = service.list_supplements(db=db, user_id=principal.user_id)
+    return success_response(
+        data=[SupplementListItem.model_validate(item).model_dump() for item in items]
+    )
+
+
+@router.get("/{supplement_id}", status_code=status.HTTP_200_OK)
+def get_supplement(
+    supplement_id,
+    db: Session = Depends(get_db),
+    principal=Depends(get_current_principal),
+):
+    supplement = service.get_supplement(db=db, user_id=principal.user_id, supplement_id=supplement_id)
+    return success_response(
+        data=SupplementResponse.model_validate(supplement).model_dump()
+    )
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+def create_manual_supplement(
+    payload: SupplementCreateRequest,
+    db: Session = Depends(get_db),
+    principal=Depends(get_current_principal),
+):
+    supplement = service.create_manual_supplement(db=db, user_id=principal.user_id, payload=payload)
+    return success_response(
+        data=SupplementResponse.model_validate(supplement).model_dump()
+    )
+
+
+@router.patch("/{supplement_id}", status_code=status.HTTP_200_OK)
+def update_supplement(
+    supplement_id,
+    payload: SupplementUpdateRequest,
+    db: Session = Depends(get_db),
+    principal=Depends(get_current_principal),
+):
+    supplement = service.update_supplement(
+        db=db,
+        user_id=principal.user_id,
+        supplement_id=supplement_id,
+        payload=payload,
+    )
+    return success_response(
+        data=SupplementResponse.model_validate(supplement).model_dump()
+    )
+
+
+@router.delete("/{supplement_id}", status_code=status.HTTP_200_OK)
+def delete_supplement(
+    supplement_id,
+    db: Session = Depends(get_db),
+    principal=Depends(get_current_principal),
+):
+    supplement = service.delete_supplement(
+        db=db,
+        user_id=principal.user_id,
+        supplement_id=supplement_id,
+    )
+    return success_response(
+        data={
+            "id": str(supplement.id),
+            "status": supplement.status.value,
+            "deleted_at": supplement.deleted_at.isoformat() if supplement.deleted_at else None,
+        }
+    )
+
+
+@router.post("/{supplement_id}/restore", status_code=status.HTTP_200_OK)
+def restore_supplement(
+    supplement_id,
+    db: Session = Depends(get_db),
+    principal=Depends(get_current_principal),
+):
+    supplement = service.restore_supplement(
+        db=db,
+        user_id=principal.user_id,
+        supplement_id=supplement_id,
+    )
+    return success_response(
+        data={
+            "id": str(supplement.id),
+            "status": supplement.status.value,
+            "deleted_at": None,
+        }
+    )
+```
+
+---
+
+## 9. `app/api/router.py` 반영
+
+역할:
+
+* supplements 라우터 등록
+
+```python
+from fastapi import APIRouter
+
+from app.api.v1.supplements import router as supplements_router
+
+api_router = APIRouter()
+api_router.include_router(supplements_router)
+```
+
+---
+
+## 10. 각 API별 단위 테스트 케이스 목록
+
+## 10-1. `GET /api/v1/supplements`
+
+1. 로그인 사용자 자신의 영양제 목록이 정상 조회된다.
+2. soft delete 된 영양제는 기본 목록에서 제외된다.
+3. 다른 사용자 영양제는 조회되지 않는다.
+4. 인증 없이 요청하면 `401 UNAUTHORIZED`.
+5. DB 조회 실패 시 `500 INTERNAL_ERROR` 또는 공통 핸들러 처리.
+
+---
+
+## 10-2. `GET /api/v1/supplements/{supplement_id}`
+
+1. 본인 영양제 상세가 정상 조회된다.
+2. ingredient_list가 함께 반환된다.
+3. 존재하지 않는 ID면 `404 NOT_FOUND`.
+4. 다른 사용자 소유면 `404` 또는 정책상 owner conceal 적용.
+5. 인증 없이 요청하면 `401 UNAUTHORIZED`.
+
+---
+
+## 10-3. `POST /api/v1/supplements`
+
+1. 필수 필드와 ingredient_list 1개 이상이면 생성 성공.
+2. `ingredient_list=[]`면 validation 실패.
+3. `amount_value <= 0`이면 `400 INVALID_INPUT`.
+4. `product_name` 공백/빈 문자열이면 `400 INVALID_INPUT`.
+5. 생성 시 `source_type=manual`이 강제된다.
+6. ingredients row가 함께 생성된다.
+7. 인증 없이 요청하면 `401 UNAUTHORIZED`.
+
+---
+
+## 10-4. `PATCH /api/v1/supplements/{supplement_id}`
+
+1. 본인 영양제 일부 필드 수정 성공.
+2. ingredient_list 교체 수정 성공.
+3. 존재하지 않는 영양제 수정 시 `404 NOT_FOUND`.
+4. 삭제된 영양제 수정 시 `409 CONFLICT`.
+5. `analysis_locked` 상태 수정 시 `409 CONFLICT`.
+6. 다른 사용자 영양제 수정 시 접근 차단.
+7. 인증 없이 요청 시 `401 UNAUTHORIZED`.
+
+---
+
+## 10-5. `DELETE /api/v1/supplements/{supplement_id}`
+
+1. soft delete 성공 시 `deleted_at`이 기록된다.
+2. 삭제 후 상태가 `deleted`로 바뀐다.
+3. 이미 삭제된 항목 재삭제 시 `409 CONFLICT`.
+4. `analysis_locked` 상태면 삭제 차단.
+5. 다른 사용자 영양제 삭제 차단.
+6. 인증 없이 요청 시 `401 UNAUTHORIZED`.
+
+---
+
+## 10-6. `POST /api/v1/supplements/{supplement_id}/restore`
+
+1. 삭제된 영양제 복구 성공.
+2. 복구 후 `deleted_at=None`, `status=active`.
+3. 삭제되지 않은 항목 복구 시 `409 CONFLICT`.
+4. 존재하지 않는 영양제 복구 시 `404 NOT_FOUND`.
+5. 다른 사용자 영양제 복구 차단.
+6. 인증 없이 요청 시 `401 UNAUTHORIZED`.
+
+---
+
+# 구현 시 주의사항
+
+1. `daily_serving_count`는 현재 예시에서 문자열 저장으로 적었지만, 실제 DB는 `NUMERIC`이 더 적절합니다.
+   지금 예시는 구조 설명용이고, 실제 모델 구현에서는 `Numeric(10, 2)` 또는 유사 타입으로 고정하는 것을 권장합니다.
+   이 부분은 확실하지 않음이 아니라 **수정 권장 사항**입니다.
+
+2. `SAEnum` 대신 9단계 기준처럼 `VARCHAR + CHECK constraint`를 쓰고 싶다면, ORM 필드 선언을 문자열 기반으로 바꾸는 쪽이 더 9단계와 잘 맞습니다. 지금 코드는 가독성 우선 예시입니다.
+
+3. owner check 시 보안상 다른 사용자 리소스는 `403`보다 `404`로 숨기는 정책이 더 안전할 수 있습니다. 이건 구현 정책 선택 사항입니다.
+
+---
+
+# 이번 단계 확정 사항
+
+* 10b 첫 구현 묶음으로 supplements P0 API 초안을 작성했습니다.
+* canonical supplement 구조는 `supplement + supplement_ingredients`로 반영했습니다.
+* 공통 에러 코드 10개 기준을 예외 모듈에 반영했습니다.
+* soft delete / restore / analysis_locked 수정 차단 정책을 서비스 로직에 반영했습니다.
+
+# 다음 단계 입력으로 넘길 핵심 요약
+
+다음 턴에서는 아래 순서로 이어가면 됩니다.
+
+1. `analysis preview` API
+2. `analysis create / status / result` API
+3. `inquiries user API`
+4. `admin inquiry internal API`
+5. 그 다음 `OCR presigned upload / job status / confirm`
+
+# 추가 확인 필요 항목
+
+1. `daily_serving_count` DB 타입을 `NUMERIC`로 최종 고정할지
+2. enum 저장을 `SAEnum`으로 갈지, 9단계 원칙대로 `VARCHAR + CHECK`로 갈지
+3. 다른 사용자 리소스 접근 시 `403` vs `404` 은닉 정책 최종 선택
+
+# 충돌 가능 항목
+
+1. 6단계의 단순 supplement 필드 예시를 그대로 쓰면 분석 preview/analysis 단계와 다시 충돌합니다.
+2. OCR confirm 시 supplement 생성 규약이 이번 manual supplement 구조와 동일하게 맞춰져야 합니다.
+3. analysis 쪽 fingerprint 계산 시 ingredient ordering 정규화가 빠지면 재사용 판정이 흔들릴 수 있습니다.
+
+---
+
+## 이번 턴에서 생성한 파일 목록 (경로 포함)
+
+이번 턴은 실제 파일 생성이 아니라 **구현 초안 작성**입니다.
+
+* `apps/backend/app/common/responses.py`
+* `apps/backend/app/core/exceptions.py`
+* `apps/backend/app/common/enums.py`
+* `apps/backend/app/db/models/supplement.py`
+* `apps/backend/app/db/models/supplement_ingredient.py`
+* `apps/backend/app/schemas/supplement.py`
+* `apps/backend/app/db/repositories/supplement_repository.py`
+* `apps/backend/app/db/repositories/supplement_ingredient_repository.py`
+* `apps/backend/app/services/supplement_service.py`
+* `apps/backend/app/api/v1/supplements.py`
+* `apps/backend/app/api/router.py`
+
+## 다음 턴에서 이어서 만들 파일 목록 (경로 포함)
+
+* `apps/backend/app/db/models/analysis_preview.py`
+* `apps/backend/app/db/models/analysis_run.py`
+* `apps/backend/app/db/models/analysis_result_item.py`
+* `apps/backend/app/db/models/analysis_guide.py`
+* `apps/backend/app/db/models/analysis_purpose_recommendation.py`
+* `apps/backend/app/schemas/analysis.py`
+* `apps/backend/app/db/repositories/analysis_repository.py`
+* `apps/backend/app/services/analysis_service.py`
+* `apps/backend/app/api/v1/analyses.py`
+* `apps/backend/app/schemas/inquiry.py`
+* `apps/backend/app/db/models/inquiry.py`
+* `apps/backend/app/db/repositories/inquiry_repository.py`
+* `apps/backend/app/services/inquiry_service.py`
+* `apps/backend/app/api/v1/inquiries.py`
+
+다음 턴에서는 이어서 **analysis preview + analysis create/status/result API**까지 순서대로 작성하겠습니다.

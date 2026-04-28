@@ -1,0 +1,52 @@
+[
+  {
+    "sample_id": "sample-daily-balance",
+    "label": "데일리 밸런스 조합",
+    "description": "비타민 C, 비타민 D, 오메가3 중심의 기본 조합",
+    "supplements": [
+      {
+        "id": "supplement-1",
+        "product_name": "Daily Multi C",
+        "manufacturer": "Well Labs",
+        "ingredients": [
+          { "name": "Vitamin C", "amount": 1000, "unit": "mg" },
+          { "name": "Vitamin D", "amount": 2000, "unit": "IU" }
+        ]
+      },
+      {
+        "id": "supplement-2",
+        "product_name": "Omega Balance",
+        "manufacturer": "Well Labs",
+        "ingredients": [
+          { "name": "Omega-3", "amount": 1200, "unit": "mg" },
+          { "name": "Vitamin D", "amount": 2000, "unit": "IU" }
+        ]
+      }
+    ]
+  },
+  {
+    "sample_id": "sample-evening-recovery",
+    "label": "저녁 회복 조합",
+    "description": "마그네슘과 칼슘이 포함된 저녁 복용 예시",
+    "supplements": [
+      {
+        "id": "supplement-3",
+        "product_name": "Night Magnesium",
+        "manufacturer": "Daily Care",
+        "ingredients": [
+          { "name": "Magnesium", "amount": 350, "unit": "mg" },
+          { "name": "Vitamin B6", "amount": 25, "unit": "mg" }
+        ]
+      },
+      {
+        "id": "supplement-4",
+        "product_name": "Calcium Plus",
+        "manufacturer": "Daily Care",
+        "ingredients": [
+          { "name": "Calcium", "amount": 600, "unit": "mg" },
+          { "name": "Magnesium", "amount": 150, "unit": "mg" }
+        ]
+      }
+    ]
+  }
+]

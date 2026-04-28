@@ -1,0 +1,9 @@
+{
+  "name": "welltrack-prototype-test04",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node backend/server.js"
+  }
+}

@@ -1,0 +1,163 @@
+10c단계 프론트엔드 P0 기능 구현 종료 보고
+
+기준:
+- 10b API contract 확정본
+- 3단계 화면 설계
+- 5단계 텍스트 와이어프레임
+- 7단계 기술 스택 확정본
+- 10a 인증/세션 방식 확정본
+
+이번 단계 구현 요약:
+1. `apps/frontend` 아래에 Next.js App Router 기반 프론트엔드 P0 구현체를 생성했다.
+2. 공개 라우트와 보호 라우트를 분리하고, 인증 기준 상태는 `/api/v1/auth/me` 조회 결과를 기준으로 구성했다.
+3. 서버 상태는 TanStack Query, 폼은 React Hook Form + Zod, UI 전역 상태는 Zustand(UI 전용) 기준으로 맞췄다.
+4. 영양제 등록/목록/상세/수정, OCR 상태 확인, 분석 preview/status/detail/history, 문의 목록/등록, 인증 화면을 포함한 P0 화면 골격을 구현했다.
+5. 프론트는 백엔드 세션 쿠키 기반 흐름에 맞춰 `localhost:3000 <-> localhost:8000` 조합으로 동작하도록 정리했다.
+
+주요 구현 파일:
+- `apps/frontend/package.json`
+- `apps/frontend/middleware.ts`
+- `apps/frontend/app/layout.tsx`
+- `apps/frontend/app/page.tsx`
+- `apps/frontend/app/(protected)/layout.tsx`
+- `apps/frontend/app/(public)/login/page.tsx`
+- `apps/frontend/app/(public)/signup/page.tsx`
+- `apps/frontend/app/(public)/forgot-password/page.tsx`
+- `apps/frontend/app/(public)/reset-password/page.tsx`
+- `apps/frontend/app/(protected)/app/page.tsx`
+- `apps/frontend/app/(protected)/supplements/page.tsx`
+- `apps/frontend/app/(protected)/supplements/new/image/page.tsx`
+- `apps/frontend/app/(protected)/supplements/new/manual/page.tsx`
+- `apps/frontend/app/(protected)/supplements/ocr-jobs/[jobId]/status/page.tsx`
+- `apps/frontend/app/(protected)/supplements/[id]/page.tsx`
+- `apps/frontend/app/(protected)/supplements/[id]/edit/page.tsx`
+- `apps/frontend/app/(protected)/supplements/[id]/review/page.tsx`
+- `apps/frontend/app/(protected)/analyses/new/preview/page.tsx`
+- `apps/frontend/app/(protected)/analyses/runs/[runId]/status/page.tsx`
+- `apps/frontend/app/(protected)/analyses/[analysisId]/page.tsx`
+- `apps/frontend/app/(protected)/analyses/history/page.tsx`
+- `apps/frontend/app/(protected)/support/inquiries/page.tsx`
+- `apps/frontend/app/(protected)/support/inquiries/new/page.tsx`
+- `apps/frontend/features/auth/forms.tsx`
+- `apps/frontend/features/dashboard/home.tsx`
+- `apps/frontend/features/supplements/components.tsx`
+- `apps/frontend/features/analyses/components.tsx`
+- `apps/frontend/features/inquiries/components.tsx`
+- `apps/frontend/lib/auth.ts`
+- `apps/frontend/lib/query.ts`
+- `apps/frontend/lib/types.ts`
+- `apps/frontend/lib/validators.ts`
+- `apps/frontend/lib/api/client.ts`
+- `apps/frontend/lib/api/server.ts`
+- `apps/frontend/lib/api/shared.ts`
+- `apps/frontend/stores/ui-store.ts`
+
+구현된 라우트:
+- 공개 라우트
+  - `/`
+  - `/login`
+  - `/signup`
+  - `/forgot-password`
+  - `/reset-password`
+- 보호 라우트
+  - `/app`
+  - `/supplements`
+  - `/supplements/new/image`
+  - `/supplements/new/manual`
+  - `/supplements/ocr-jobs/[jobId]/status`
+  - `/supplements/[id]`
+  - `/supplements/[id]/edit`
+  - `/supplements/[id]/review`
+  - `/analyses/new/preview`
+  - `/analyses/runs/[runId]/status`
+  - `/analyses/[analysisId]`
+  - `/analyses/history`
+  - `/support/inquiries`
+  - `/support/inquiries/new`
+
+인증/상태관리 기준:
+1. 인증 여부는 로컬 토큰이 아니라 `/api/v1/auth/me` 결과로 판별한다.
+2. 세션 저장은 백엔드 HttpOnly cookie 기준이다.
+3. 서버 상태는 TanStack Query 캐시를 source of truth로 사용한다.
+4. Zustand는 모바일 사이드바, 배너, UI 토글 같은 클라이언트 UI 상태만 담당한다.
+
+확인된 동작 범위:
+1. 프론트 빌드와 타입체크가 가능한 구조로 정리됐다.
+2. 회원가입/로그인/CORS/localhost 쿠키 문제는 프론트-백엔드 연결 기준으로 수정됐다.
+3. 보호 페이지 접근, 영양제/OCR/분석/문의 주요 경로는 최소 렌더링 기준으로 연결됐다.
+
+이번 단계에서 생성된 파일 목록:
+- `apps/frontend/.env.example`
+- `apps/frontend/.env.local`
+- `apps/frontend/middleware.ts`
+- `apps/frontend/next-env.d.ts`
+- `apps/frontend/next.config.ts`
+- `apps/frontend/package-lock.json`
+- `apps/frontend/package.json`
+- `apps/frontend/postcss.config.mjs`
+- `apps/frontend/tailwind.config.ts`
+- `apps/frontend/tsconfig.json`
+- `apps/frontend/app/globals.css`
+- `apps/frontend/app/layout.tsx`
+- `apps/frontend/app/loading.tsx`
+- `apps/frontend/app/not-found.tsx`
+- `apps/frontend/app/page.tsx`
+- `apps/frontend/app/(public)/login/page.tsx`
+- `apps/frontend/app/(public)/signup/page.tsx`
+- `apps/frontend/app/(public)/forgot-password/page.tsx`
+- `apps/frontend/app/(public)/reset-password/page.tsx`
+- `apps/frontend/app/(protected)/layout.tsx`
+- `apps/frontend/app/(protected)/app/page.tsx`
+- `apps/frontend/app/(protected)/supplements/page.tsx`
+- `apps/frontend/app/(protected)/supplements/new/image/page.tsx`
+- `apps/frontend/app/(protected)/supplements/new/manual/page.tsx`
+- `apps/frontend/app/(protected)/supplements/ocr-jobs/[jobId]/status/page.tsx`
+- `apps/frontend/app/(protected)/supplements/[id]/page.tsx`
+- `apps/frontend/app/(protected)/supplements/[id]/edit/page.tsx`
+- `apps/frontend/app/(protected)/supplements/[id]/review/page.tsx`
+- `apps/frontend/app/(protected)/analyses/new/preview/page.tsx`
+- `apps/frontend/app/(protected)/analyses/runs/[runId]/status/page.tsx`
+- `apps/frontend/app/(protected)/analyses/[analysisId]/page.tsx`
+- `apps/frontend/app/(protected)/analyses/history/page.tsx`
+- `apps/frontend/app/(protected)/support/inquiries/page.tsx`
+- `apps/frontend/app/(protected)/support/inquiries/new/page.tsx`
+- `apps/frontend/features/auth/forms.tsx`
+- `apps/frontend/features/dashboard/home.tsx`
+- `apps/frontend/features/supplements/components.tsx`
+- `apps/frontend/features/analyses/components.tsx`
+- `apps/frontend/features/inquiries/components.tsx`
+- `apps/frontend/lib/auth.ts`
+- `apps/frontend/lib/query.ts`
+- `apps/frontend/lib/types.ts`
+- `apps/frontend/lib/utils.ts`
+- `apps/frontend/lib/validators.ts`
+- `apps/frontend/lib/api/client.ts`
+- `apps/frontend/lib/api/server.ts`
+- `apps/frontend/lib/api/shared.ts`
+- `apps/frontend/stores/ui-store.ts`
+
+다음 단계에서 이어서 만들거나 정리할 파일:
+- `manual/development process/step_11.txt`
+- `apps/frontend/README.md` 또는 루트 실행 가이드 보강본
+- 배포용 `Dockerfile` 초안
+- 프론트 health check / start 스크립트 보강 파일
+
+이번 단계 확정 사항:
+1. 10c P0 프론트 구현체는 `apps/frontend` 아래에 실제 생성되어 있다.
+2. 10c 구현 기준은 App Router + TanStack Query + RHF + Zod + Zustand(UI 전용) 조합으로 고정됐다.
+3. 인증 기준은 `/api/v1/auth/me`와 서버 세션 쿠키 방식으로 맞췄다.
+4. 보호/공개 라우트 분리와 주요 P0 화면 경로가 구현됐다.
+
+다음 단계 입력으로 넘길 핵심 요약:
+1. 프론트 구현체는 이미 존재하며, step 11은 이 `apps/frontend` 구조를 기준으로 배포 초안을 작성하면 된다.
+2. 프론트 배포 대상은 Next.js 앱이고, 백엔드는 `localhost:8000` 기준 API 통신 구조를 사용한다.
+3. step 11에서는 프론트/백엔드/Docker/환경변수/health check/CI 초안을 이 구현체 기준으로 정리하면 된다.
+
+추가 확인 필요 항목:
+1. OCR 엔진 품질과 실제 브라우저 end-to-end 검증은 10c 화면 구현 완료와 별개로 후속 보강이 필요하다.
+2. 분석 결과 UX/문구 품질, 프론트 health check 방식, 운영용 start 전략은 11단계에서 다시 다듬을 수 있다.
+
+충돌 가능 항목:
+1. 프론트 구현체는 존재하지만, 이 문서가 누락되어 handoff 가시성이 떨어져 있었다.
+2. 이후 11단계에서 프론트 실행/배포 방식을 변경할 경우, 현재 로컬 실행 기준(`localhost:3000`)과 차이가 생길 수 있다.
+3. OCR/분석 품질 문제를 10c 화면 구현 완료와 동일한 의미로 보면 안 된다. 화면 구현 완료와 기능 품질 완료는 분리해서 봐야 한다.
